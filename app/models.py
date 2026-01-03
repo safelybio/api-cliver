@@ -64,8 +64,10 @@ class BackgroundWork(BaseModel):
 
 
 class ToolResult(BaseModel):
-    """A single result from a tool call."""
+    """A single result from a tool call, flattened for easy iteration."""
 
+    tool: str  # Tool name (e.g., "search_web", "search_epmc")
+    query: str  # Human-readable search query
     id: str  # Citation ID (e.g., "epmc1", "web1", "screen1")
     title: str
     url: str
@@ -77,15 +79,6 @@ class ToolResult(BaseModel):
     programs: list[str] | None = None
 
 
-class ToolCall(BaseModel):
-    """A standardized tool call for the audit section."""
-
-    tool: str  # Tool name
-    query: str  # Human-readable search query
-    result_count: int
-    results: list[ToolResult]
-
-
 class RawOutput(BaseModel):
     """Raw AI-generated markdown outputs."""
 
@@ -94,9 +87,9 @@ class RawOutput(BaseModel):
 
 
 class Audit(BaseModel):
-    """Audit section with tool calls and raw outputs."""
+    """Audit section with tool results and raw outputs."""
 
-    tool_calls: list[ToolCall]
+    tool_calls: list[ToolResult]  # Flat list of results with tool/query embedded
     raw: RawOutput
 
 

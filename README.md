@@ -118,7 +118,7 @@ If no relevant work is found, `background_work` will be `null` or empty.
 
 ### Audit Trail
 
-The `audit` section contains complete details of every search performed:
+The `audit` section contains a flat list of all search results:
 
 ```json
 {
@@ -127,21 +127,17 @@ The `audit` section contains complete details of every search performed:
       {
         "tool": "search_web",
         "query": "Jane Smith MIT biology",
-        "result_count": 10,
-        "results": [
-          {
-            "id": "web1",
-            "title": "Jane Smith - MIT Biology",
-            "url": "https://biology.mit.edu/people/jane-smith",
-            "snippet": "Associate Professor of Biology..."
-          }
-        ]
+        "id": "web1",
+        "title": "Jane Smith - MIT Biology",
+        "url": "https://biology.mit.edu/people/jane-smith",
+        "snippet": "Associate Professor of Biology..."
       },
       {
         "tool": "search_screening_list",
         "query": "Massachusetts Institute Technology",
-        "result_count": 0,
-        "results": []
+        "id": "screen1",
+        "title": "No results",
+        "url": ""
       }
     ],
     "raw": {
@@ -152,7 +148,7 @@ The `audit` section contains complete details of every search performed:
 }
 ```
 
-Each source ID (like `web1`, `epmc2`, `screen1`) in the checks refers to a specific result in this list. The `raw` section contains the complete AI analysis text for full transparency.
+Each result includes the `tool` and `query` that produced it, making it easy to loop through. Source IDs (like `web1`, `epmc2`, `screen1`) in the checks refer to these results. The `raw` section contains the complete AI analysis text for full transparency.
 
 ## Example: Complete Response
 
@@ -208,41 +204,51 @@ Each source ID (like `web1`, `epmc2`, `screen1`) in the checks refers to a speci
       {
         "tool": "search_web",
         "query": "Jane Smith MIT biology",
-        "result_count": 8,
-        "results": [
-          {
-            "id": "web1",
-            "title": "Jane Smith - MIT Biology",
-            "url": "https://biology.mit.edu/people/jane-smith",
-            "snippet": "Associate Professor of Biology, studying viral entry mechanisms..."
-          },
-          {
-            "id": "web2",
-            "title": "MIT Biology Department",
-            "url": "https://biology.mit.edu",
-            "snippet": "Research areas include infectious disease, molecular biology..."
-          }
-        ]
+        "id": "web1",
+        "title": "Jane Smith - MIT Biology",
+        "url": "https://biology.mit.edu/people/jane-smith",
+        "snippet": "Associate Professor of Biology, studying viral entry mechanisms..."
+      },
+      {
+        "tool": "search_web",
+        "query": "Jane Smith MIT biology",
+        "id": "web2",
+        "title": "MIT Biology Department",
+        "url": "https://biology.mit.edu",
+        "snippet": "Research areas include infectious disease, molecular biology..."
+      },
+      {
+        "tool": "search_web",
+        "query": "mit.edu email domain",
+        "id": "web3",
+        "title": "MIT Email Services",
+        "url": "https://ist.mit.edu/email",
+        "snippet": "Official MIT email domain for students and faculty..."
       },
       {
         "tool": "search_epmc",
-        "query": "Jane Smith coronavirus spike",
-        "result_count": 12,
-        "results": [
-          {
-            "id": "epmc1",
-            "title": "SARS-CoV-2 spike mutations affecting receptor binding",
-            "url": "https://doi.org/10.1038/...",
-            "authors": ["Jane Smith", "John Doe"],
-            "year": 2023
-          }
-        ]
+        "query": "Jane Smith about coronavirus spike",
+        "id": "epmc1",
+        "title": "SARS-CoV-2 spike mutations affecting receptor binding",
+        "url": "https://doi.org/10.1038/...",
+        "authors": ["Jane Smith", "John Doe"],
+        "year": 2023
+      },
+      {
+        "tool": "search_epmc",
+        "query": "Jane Smith about coronavirus",
+        "id": "epmc2",
+        "title": "Coronavirus entry mechanisms review",
+        "url": "https://doi.org/10.1016/...",
+        "authors": ["Jane Smith", "Alice Brown"],
+        "year": 2022
       },
       {
         "tool": "search_screening_list",
-        "query": "Massachusetts Institute Technology",
-        "result_count": 0,
-        "results": []
+        "query": "Jane Smith, Massachusetts Institute Technology",
+        "id": "screen1",
+        "title": "No results",
+        "url": ""
       }
     ],
     "raw": {

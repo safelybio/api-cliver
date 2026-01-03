@@ -8,7 +8,6 @@ from typing import Any
 import httpx
 from tavily import TavilyClient  # type: ignore[import-untyped]
 
-from app.models import ToolCall as NormalizedToolCall
 from app.models import ToolResult
 from app.tools.registry import ToolOutput, execute_tool, get_responses_tools
 
@@ -105,12 +104,13 @@ def _build_query(tool_name: str, args: dict[str, Any]) -> str:
     return str(args)
 
 
-def normalize_tool_calls(raw_calls: list[RawToolCall]) -> list[NormalizedToolCall]:
-    """Convert raw tool calls to normalized format for audit section.
+def normalize_tool_calls(raw_calls: list[RawToolCall]) -> list[ToolResult]:
+    """Convert raw tool calls to flat list of results for audit section.
 
+    Each result includes the tool name and query for easy iteration.
     IDs are already assigned in model_output, so we just extract them.
     """
-    normalized = []
+    results: list[ToolResult] = []
 
     for tc in raw_calls:
         # Parse the model output JSON (contains IDs)
@@ -120,7 +120,6 @@ def normalize_tool_calls(raw_calls: list[RawToolCall]) -> list[NormalizedToolCal
             data = {}
 
         query = _build_query(tc.tool_name, tc.arguments)
-        results: list[ToolResult] = []
 
         # Extract results with their IDs
         items = data.get("results", [])
@@ -129,6 +128,8 @@ def normalize_tool_calls(raw_calls: list[RawToolCall]) -> list[NormalizedToolCal
         if not items and data.get("id"):
             results.append(
                 ToolResult(
+                    tool=tc.tool_name,
+                    query=query,
                     id=data["id"],
                     title=data.get("message", "No results"),
                     url="",
@@ -142,6 +143,8 @@ def normalize_tool_calls(raw_calls: list[RawToolCall]) -> list[NormalizedToolCal
                 if tc.tool_name == "search_web":
                     results.append(
                         ToolResult(
+                            tool=tc.tool_name,
+                            query=query,
                             id=result_id,
                             title=item.get("title", ""),
                             url=item.get("url", ""),
@@ -160,6 +163,8 @@ def normalize_tool_calls(raw_calls: list[RawToolCall]) -> list[NormalizedToolCal
                             pass
                     results.append(
                         ToolResult(
+                            tool=tc.tool_name,
+                            query=query,
                             id=result_id,
                             title=item.get("title", ""),
                             url=f"https://doi.org/{doi}" if doi else "",
@@ -170,6 +175,8 @@ def normalize_tool_calls(raw_calls: list[RawToolCall]) -> list[NormalizedToolCal
                 elif tc.tool_name == "search_screening_list":
                     results.append(
                         ToolResult(
+                            tool=tc.tool_name,
+                            query=query,
                             id=result_id,
                             title=item.get("name", ""),
                             url="",
@@ -177,11 +184,12 @@ def normalize_tool_calls(raw_calls: list[RawToolCall]) -> list[NormalizedToolCal
                         )
                     )
                 elif tc.tool_name == "get_orcid_profile":
-                    orcid_id = item.get("orcid_id", "")
                     # Build name from person data
                     name = item.get("credit_name") or f"{item.get('given_name', '')} {item.get('family_name', '')}".strip() or "Unknown"
                     results.append(
                         ToolResult(
+                            tool=tc.tool_name,
+                            query=query,
                             id=result_id,
                             title=name,
                             url=item.get("orcid_url", ""),
@@ -197,6 +205,8 @@ def normalize_tool_calls(raw_calls: list[RawToolCall]) -> list[NormalizedToolCal
                             pass
                     results.append(
                         ToolResult(
+                            tool=tc.tool_name,
+                            query=query,
                             id=result_id,
                             title=item.get("title", ""),
                             url=item.get("url", ""),
@@ -207,25 +217,15 @@ def normalize_tool_calls(raw_calls: list[RawToolCall]) -> list[NormalizedToolCal
                     # Generic fallback
                     results.append(
                         ToolResult(
+                            tool=tc.tool_name,
+                            query=query,
                             id=result_id,
                             title=item.get("title", str(item)),
                             url=item.get("url", ""),
                         )
                     )
 
-        # Get result count from metadata or items
-        result_count = data.get("hit_count") or data.get("total") or len(results)
-
-        normalized.append(
-            NormalizedToolCall(
-                tool=tc.tool_name,
-                query=query,
-                result_count=result_count,
-                results=results,
-            )
-        )
-
-    return normalized
+    return results
 
 
 class OpenRouterClient:
