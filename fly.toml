@@ -1,7 +1,7 @@
-# fly.toml app configuration file for cliver-customer-verification
+# fly.toml app configuration file for cliver-api
 # See https://fly.io/docs/reference/configuration/
 
-app = 'cliver-customer-verification'
+app = 'cliver-api'
 primary_region = 'iad'
 
 [build]
