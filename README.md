@@ -2,7 +2,7 @@
 
 This API performs automated know-your-customer (KYC) verification for life science customers, checking their institutional affiliation, email legitimacy, and sanctions compliance.
 
-**Interactive API documentation**: [cliver-api.fly.dev/docs#/default/verify_customer_verify_post](cliver-api.fly.dev/docs#/default/verify_customer_verify_post)
+**Interactive API documentation**: [cliver-api.fly.dev/docs#/default/verify_customer_verify_post](https://cliver-api.fly.dev/docs#/default/verify_customer_verify_post)
 
 ## Making a Request
 
