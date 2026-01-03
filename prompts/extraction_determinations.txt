@@ -1,0 +1,9 @@
+Extract the Determinations table (Table 2) from the following KYC verification report.
+
+The table has columns: Criterion | Flag Status
+
+For each row:
+- criterion: One of "Customer Institutional Affiliation", "Institution Type and Biomedical Focus", "Email Domain Verification", or "Sanctions and Export Control Screening"
+- flag: Either "FLAG", "NO FLAG", or "UNDETERMINED"
+
+Return exactly 4 rows, one for each criterion (1-4).

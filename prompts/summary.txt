@@ -1,0 +1,20 @@
+Generate a brief summary (under 25 words) of this KYC verification result for a synthetic DNA order:
+
+{{customer_info}}
+
+=== Verification Analysis ===
+{{verification_raw}}
+
+=== Background Work Analysis ===
+{{work_raw}}
+
+Guidelines:
+- Do NOT include the decision status (PASS/REVIEW/FLAG) in your summary - that is shown separately.
+- Focus on the key findings: what was verified, any concerns found, and relevant customer work.
+- For clean verifications: briefly note the customer's research focus if present.
+- For flagged items: explain the specific concern (e.g., "affiliation mismatch" or "sanctions list match for parent organization").
+- Be factual and specific, drawing from the evidence above.
+
+Note: Prior laboratory work with controlled agents or sequences of concern is a by itself not a reason to flag. It demonstrates the customer has appropriate credentials and biosafety experience to handle such materials.
+
+Write a single sentence summary under 25 words. Respond with only the sentence summary and nothing else.

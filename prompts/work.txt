@@ -1,0 +1,15 @@
+Identify relevant laboratory work for the following customer of a synthetic DNA provider:
+{{customer_info}}
+
+Search for customer-authored work on the ordered organism first, then related organisms, then broader wet lab work by the customer. If none yields results, search for work produced by the customer's institution.
+Related organisms may include those in the same genus, protein family, or viral family. Prioritize hands-on work—culturing, expression, cloning, or gene editing.
+
+Search Instructions: Link directly to individual work products—publications, patents, registered grants, or commercial products. Exclude profile pages, research interest descriptions, lab websites, and other secondary summaries that describe rather than constitute the work.
+
+Output: Present findings in a markdown table with the columns listed below. Include only work per row, and at most 5 works total (prioritizing by relevance).
+- Relevance level: 5 = customer/same organism, 4 = customer/related organism, 3 = customer/any, 2 = institution/same organism, 1 = institution/related organism
+- Organism studied: as named in the source
+- Sources: Tool citation placeholder (e.g., [web1])
+- Work summary: One sentence factual description of what the source contains
+
+NOTE: Always report at least one piece of work authored by the customer, or state explictly if you couldn't find any.

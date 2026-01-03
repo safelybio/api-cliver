@@ -1,0 +1,99 @@
+# Tool Definitions - Single Source of Truth
+# All tool descriptions, parameters, and metadata are defined here.
+
+tools:
+  search_web:
+    description: |
+      Search the web for current information using Tavily.
+      Use for real-time data like stock prices, news, current events,
+      or any information not available in other specialized tools.
+    parameters:
+      query:
+        type: string
+        description: The search query string
+        required: true
+    implementation: app.tools.implementations.web_search:search_web
+
+  search_screening_list:
+    description: |
+      Search the US Consolidated Screening List for sanctioned entities,
+      denied parties, and other restricted persons or organizations.
+      Use this to check if a person or organization is on any US sanctions list.
+    parameters:
+      queries:
+        type: array
+        items:
+          type: string
+        description: |
+          List of keywords to match against the institution/person name. Each query should be
+          2-5 distinct words. Multiple queries increase correct match likelihood.
+        required: true
+    implementation: app.tools.implementations.screening_list:search_screening_list
+
+  search_epmc:
+    description: |
+      Search Europe PubMed Central (EPMC) for scientific articles and publications.
+      Use this to find research papers by author, institution, topic, or ORCID identifier.
+    parameters:
+      orcid:
+        type: string
+        description: Author's ORCID identifier (e.g., '0000-0002-1825-0097')
+        required: false
+      author:
+        type: string
+        description: Author name to search for (e.g., 'John Smith'). Skip middle names and initials.
+        required: false
+      affiliation:
+        type: string
+        description: Institution or affiliation to search for (e.g., 'Harvard University')
+        required: false
+      topic:
+        type: string
+        description: Topic or keywords to search for (e.g., 'CRISPR gene editing')
+        required: false
+      mode:
+        type: string
+        enum:
+          - lite
+          - full
+        default: lite
+        description: |
+          Search mode: 'lite' returns 25 results with title, author string, and matching
+          author details; 'full' returns 5 results with complete metadata including abstracts.
+        required: false
+    implementation: app.tools.implementations.epmc:search_epmc
+
+  get_orcid_profile:
+    description: |
+      Get researcher profile information from ORCID (Open Researcher and Contributor ID).
+      Returns name, biography, affiliations, employment history, education, and up to 5 recent publications.
+      Use this to get detailed information about a specific researcher.
+    parameters:
+      orcid_id:
+        type: string
+        description: The ORCID identifier in format XXXX-XXXX-XXXX-XXXX (e.g., '0000-0002-1825-0097')
+        required: true
+    implementation: app.tools.implementations.orcid:get_orcid_profile
+
+  search_orcid_works:
+    description: |
+      Search a researcher's ORCID publications by keywords.
+      Use this after get_orcid_profile when you need to find specific publications
+      among a researcher's full publication list. Keywords are matched against
+      title, journal name, and publication type. Use single words or short phrases
+      (e.g., 'GPCR', 'cancer', 'Nature', 'review').
+    parameters:
+      orcid_id:
+        type: string
+        description: The ORCID identifier in format XXXX-XXXX-XXXX-XXXX (e.g., '0000-0002-1825-0097')
+        required: true
+      keywords:
+        type: array
+        items:
+          type: string
+        description: |
+          List of keywords to search for in publications. Each keyword is matched
+          case-insensitively against title, journal, and type. Use specific terms
+          like topic words, journal names, or publication types.
+        required: true
+    implementation: app.tools.implementations.orcid:search_orcid_works

@@ -1,0 +1,24 @@
+Screen the following customer order for a synthetic DNA provider:
+{{customer_info}}
+
+Assign FLAG / NO FLAG / UNDETERMINED status for each criterion:
+
+1. Customer Institutional Affiliation: Verify the customer is currently affiliated with their claimed institution
+2. Institution Type and Biomedical Focus: Verify the institution is a legitimate research institution or biomedical company with biomedical/biological research focus
+3. Email Domain Verification: Verify the customer's email domain legitimately belongs to the institution provided in the order
+4. Sanctions and Export Control Screening: Verify the institution is not subject to sanctions or export control restrictions
+
+Flag logic: FLAG if no evidence found after searching or if sources contradict the claim. UNDETERMINED if evidence exists only from insufficient sources. NO FLAG if at least one sufficient source confirms the criterion. If sufficient sources conflict with each other, FLAG.
+
+Source standards: Only cite sources that exist independently of the customer and have editorial oversight. Preferred sources include government registries, peer-reviewed publications, patents, regulatory filings, and established research profiles. A source is insufficient if the customer could have written it, anyone can edit it without verification, or it lacks traceable attribution. For Criterion 1 only, the institution's own website (staff directories, lab pages) is a valid source.
+
+Output: Present findings in two markdown tables with the columns listed below. Include at most 3 sources for each criterion.
+
+Table 1 — Evidence:
+- Criterion (1–4)
+- Sources: Tool citation placeholder (e.g., [web1], [screen1])
+- Evidence Summary: Factual description of what the source states
+
+Table 2 — Determinations:
+- Criterion (1–4)
+- Flag Status: FLAG, NO FLAG, or UNDETERMINED

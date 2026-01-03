@@ -1,0 +1,16 @@
+Extract the Evidence table (Table 1) from the following KYC verification report.
+
+The table has columns: Criterion | Sources | Evidence Summary
+
+For each row:
+- criterion: One of "Customer Institutional Affiliation", "Institution Type and Biomedical Focus", "Email Domain Verification", or "Sanctions and Export Control Screening"
+- sources: List of tool citation IDs from brackets like [web1], [screen1], [epmc1]
+- evidence_summary: The factual description of what the source states
+
+Return exactly 4 rows, one for each criterion (1-4).
+
+Tool ID mapping reference:
+- web1, web2, etc. = web search results
+- screen1, screen2, etc. = sanctions screening results
+- epmc1, epmc2, etc. = PubMed/EPMC article results
+- orcid1, orcid2, etc. = ORCID profile results

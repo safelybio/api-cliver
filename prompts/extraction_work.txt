@@ -1,0 +1,16 @@
+Extract the background work table from the following laboratory work report.
+
+The table has columns: Relevance level | Organism studied | Sources | Work summary
+
+For each row:
+- relevance_level: Integer (5=customer/same organism, 4=customer/related, 3=customer/any, 2=institution/same, 1=institution/related)
+- organism: The organism as named in the source
+- sources: List of tool citation IDs from brackets like [web1], [epmc1]
+- work_summary: One sentence factual description
+
+Return all work rows found (up to 5). If no work was found, return empty rows array.
+
+Tool ID mapping reference:
+- web1, web2, etc. = web search results
+- epmc1, epmc2, etc. = PubMed/EPMC article results
+- orcid1, orcid2, etc. = ORCID profile results
