@@ -32,8 +32,8 @@ from app.openrouter import (
 )
 
 app = FastAPI(
-    title="KYC Verification API",
-    description="API for KYC verification using AI-powered research tools",
+    title="DNA Synthesis KYC API",
+    description="AI Customer Screening for Nucleic Acid Providers",
     version="1.0.0",
 )
 
