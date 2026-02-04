@@ -145,13 +145,8 @@ class TestFieldLengthLimits:
 
 
 class TestEmailValidation:
-    """Tests for email format validation (requires 2.3 implementation).
+    """Tests for email format validation."""
 
-    These tests are marked as expected failures until 2.3 is implemented.
-    After implementing EmailStr in KYCRequest, remove the xfail markers.
-    """
-
-    @pytest.mark.xfail(reason="Email validation not yet implemented (2.3)")
     def test_invalid_email_format(self, test_client):
         """Test that invalid email format returns 422."""
         response = test_client.post(
@@ -165,7 +160,6 @@ class TestEmailValidation:
         )
         assert response.status_code == 422
 
-    @pytest.mark.xfail(reason="Email validation not yet implemented (2.3)")
     def test_email_missing_domain(self, test_client):
         """Test that email without domain returns 422."""
         response = test_client.post(
@@ -179,7 +173,6 @@ class TestEmailValidation:
         )
         assert response.status_code == 422
 
-    @pytest.mark.xfail(reason="Email validation not yet implemented (2.3)")
     def test_email_missing_local_part(self, test_client):
         """Test that email without local part returns 422."""
         response = test_client.post(
@@ -196,7 +189,7 @@ class TestEmailValidation:
     def test_valid_email_format(self, httpx_mock, test_client, mock_tavily):
         """Test that valid email format is accepted."""
         # This test just verifies valid emails work (placeholder for future)
-        pass  # Will be more meaningful after 2.3
+        pass
 
 
 class TestOptionalFields:
