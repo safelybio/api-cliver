@@ -1,7 +1,10 @@
 """FastAPI application for KYC verification."""
 
 import asyncio
+import logging
 import os
+import time
+import uuid
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -14,6 +17,15 @@ from slowapi.util import get_remote_address
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Configure logging
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="%(levelname)s | %(asctime)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
 
 from app.models import (
     BACKGROUND_WORK_SCHEMA,
@@ -42,6 +54,31 @@ app = FastAPI(
     description="AI Customer Screening for Nucleic Acid Providers",
     version="1.0.0",
 )
+
+
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    """Add request ID to each request for logging correlation."""
+    request_id = str(uuid.uuid4())[:8]
+    request.state.request_id = request_id
+    start_time = time.time()
+
+    response = await call_next(request)
+
+    duration_ms = int((time.time() - start_time) * 1000)
+    response.headers["X-Request-ID"] = request_id
+
+    # Log request completion (no PII)
+    logger.info(
+        f"request_id={request_id} | "
+        f"method={request.method} | "
+        f"path={request.url.path} | "
+        f"status={response.status_code} | "
+        f"duration_ms={duration_ms}"
+    )
+
+    return response
+
 
 # Load prompts at startup
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
@@ -89,10 +126,12 @@ async def rate_limit_exceeded_handler(
     request: Request, exc: RateLimitExceeded
 ) -> JSONResponse:
     """Handle rate limit exceeded errors."""
+    request_id = getattr(request.state, "request_id", "unknown")
+    logger.warning(f"request_id={request_id} | rate_limit_exceeded")
     return JSONResponse(
         status_code=429,
         content={"detail": "Rate limit exceeded. Try again later."},
-        headers={"Retry-After": "60"},
+        headers={"Retry-After": "60", "X-Request-ID": request_id},
     )
 
 
@@ -213,10 +252,17 @@ async def verify_customer(
 
     Requires X-API-Key header for authentication.
     """
+    request_id = getattr(request.state, "request_id", "unknown")
+    has_order = bool(kyc_request.order_description)
+    logger.info(f"request_id={request_id} | verify_started | has_order={has_order}")
+
     try:
         client = OpenRouterClient()
     except ValueError as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.error(f"request_id={request_id} | client_init_failed | error={e}")
+        raise HTTPException(
+            status_code=500, detail="Service configuration error"
+        ) from e
 
     # Build customer info string for prompt templates
     customer_info = f"""Name: {kyc_request.customer_name}
@@ -240,8 +286,12 @@ Email: {kyc_request.email}"""
             id_counters=id_counters,
         )
     except Exception as e:
+        logger.error(
+            f"request_id={request_id} | verification_prompt_failed | error={e}",
+            exc_info=True,
+        )
         raise HTTPException(
-            status_code=502, detail=f"Verification prompt failed: {e}"
+            status_code=502, detail="Verification service temporarily unavailable"
         ) from e
 
     # Run work prompt with tools only if order_description provided
@@ -255,8 +305,12 @@ Email: {kyc_request.email}"""
                 id_counters=id_counters,  # Use same counters
             )
         except Exception as e:
+            logger.error(
+                f"request_id={request_id} | work_prompt_failed | error={e}",
+                exc_info=True,
+            )
             raise HTTPException(
-                status_code=502, detail=f"Work prompt failed: {e}"
+                status_code=502, detail="Verification service temporarily unavailable"
             ) from e
 
     # Build extraction contexts
@@ -303,8 +357,12 @@ Email: {kyc_request.email}"""
         work_data = results[2] if len(results) > 2 else None
 
     except Exception as e:
+        logger.error(
+            f"request_id={request_id} | extraction_failed | error={e}",
+            exc_info=True,
+        )
         raise HTTPException(
-            status_code=502, detail=f"Extraction failed: {e}"
+            status_code=502, detail="Verification service temporarily unavailable"
         ) from e
 
     # Parse extracted data
@@ -335,8 +393,9 @@ Email: {kyc_request.email}"""
         summary = await client.generate_text_async(summary_prompt, model=EXTRACTION_MODEL)
         # Clean up summary (remove quotes, word counts, etc.)
         summary = summary.strip().strip('"').strip("'")
-    except Exception:
+    except Exception as e:
         # Fallback to simple summary if LLM fails
+        logger.warning(f"request_id={request_id} | summary_generation_failed | error={e}")
         if status == "PASS":
             summary = "All verification criteria passed."
         elif status == "FLAG":
@@ -361,6 +420,11 @@ Email: {kyc_request.email}"""
             verification=verification_result.text,
             work=work_result.text if work_result else None,
         ),
+    )
+
+    logger.info(
+        f"request_id={request_id} | verify_completed | "
+        f"status={status} | flags_count={flags_count}"
     )
 
     return KYCResponse(
