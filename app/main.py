@@ -5,8 +5,12 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Security
+from fastapi import FastAPI, HTTPException, Request, Security
+from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 # Load environment variables from .env file
 load_dotenv()
@@ -67,6 +71,29 @@ def verify_api_key(api_key: str = Security(api_key_header)) -> str:
     if not expected_key or api_key != expected_key:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
     return api_key
+
+
+# Rate limiting - 60 requests per minute per API key (or IP if no key)
+def _get_rate_limit_key(request: Request) -> str:
+    """Rate limit by API key if present, else by IP address."""
+    api_key = request.headers.get("X-API-Key")
+    return api_key if api_key else get_remote_address(request)
+
+
+limiter = Limiter(key_func=_get_rate_limit_key)
+app.state.limiter = limiter
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_exceeded_handler(
+    request: Request, exc: RateLimitExceeded
+) -> JSONResponse:
+    """Handle rate limit exceeded errors."""
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Rate limit exceeded. Try again later."},
+        headers={"Retry-After": "60"},
+    )
 
 
 def _format_tool_context(tool_calls: list[RawToolCall]) -> str:
@@ -170,8 +197,10 @@ def _build_summary_prompt(
 
 
 @app.post("/verify", response_model=KYCResponse)
+@limiter.limit("60/minute")
 async def verify_customer(
-    request: KYCRequest,
+    request: Request,
+    kyc_request: KYCRequest,
     api_key: str = Security(verify_api_key),
 ) -> KYCResponse:
     """
@@ -190,12 +219,12 @@ async def verify_customer(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
     # Build customer info string for prompt templates
-    customer_info = f"""Name: {request.customer_name}
-Institution: {request.institution}
-Email: {request.email}"""
+    customer_info = f"""Name: {kyc_request.customer_name}
+Institution: {kyc_request.institution}
+Email: {kyc_request.email}"""
 
-    if request.order_description:
-        customer_info += f"\nOrder: {request.order_description}"
+    if kyc_request.order_description:
+        customer_info += f"\nOrder: {kyc_request.order_description}"
 
     # Shared ID counters for consistent IDs across both prompts
     id_counters: dict[str, int] = {}
@@ -217,7 +246,7 @@ Email: {request.email}"""
 
     # Run work prompt with tools only if order_description provided
     work_result: CompletionResult | None = None
-    if request.order_description:
+    if kyc_request.order_description:
         work_prompt = WORK_PROMPT.replace("{{customer_info}}", customer_info)
         try:
             work_result = client.complete_with_tools(
