@@ -244,8 +244,8 @@ class OpenRouterClient:
         self.headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://kyc-api.fly.dev",
-            "X-Title": "KYC API",
+            "HTTP-Referer": os.environ.get("OPENROUTER_REFERER", "https://cliver.example.com"),
+            "X-Title": os.environ.get("OPENROUTER_TITLE", "Cliver KYC API"),
         }
 
     def complete_with_tools(
