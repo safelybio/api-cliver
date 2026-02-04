@@ -2,7 +2,7 @@
 
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # Criteria names matching the verification prompt
 VERIFICATION_CRITERIA = [
@@ -21,10 +21,10 @@ VERIFICATION_CRITERIA = [
 class KYCRequest(BaseModel):
     """Request model for KYC verification."""
 
-    customer_name: str
-    email: str
-    institution: str
-    order_description: str | None = None  # Optional - skip work prompt if not provided
+    customer_name: str = Field(..., max_length=200)
+    email: str = Field(..., max_length=254)  # RFC 5321 limit
+    institution: str = Field(..., max_length=500)
+    order_description: str | None = Field(None, max_length=2000)
 
 
 # =============================================================================

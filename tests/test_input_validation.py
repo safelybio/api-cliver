@@ -64,13 +64,8 @@ class TestRequiredFields:
 
 
 class TestFieldLengthLimits:
-    """Tests for field length limits (requires 1.3 implementation).
+    """Tests for field length limits."""
 
-    These tests are marked as expected failures until 1.3 is implemented.
-    After implementing max_length constraints in KYCRequest, remove the xfail markers.
-    """
-
-    @pytest.mark.xfail(reason="Field length limits not yet implemented (1.3)")
     def test_customer_name_too_long(self, test_client):
         """Test that customer_name > 200 chars returns 422."""
         response = test_client.post(
@@ -83,7 +78,6 @@ class TestFieldLengthLimits:
         )
         assert response.status_code == 422
 
-    @pytest.mark.xfail(reason="Field length limits not yet implemented (1.3)")
     def test_email_too_long(self, test_client):
         """Test that email > 254 chars returns 422."""
         # 254 is RFC 5321 limit
@@ -98,7 +92,6 @@ class TestFieldLengthLimits:
         )
         assert response.status_code == 422
 
-    @pytest.mark.xfail(reason="Field length limits not yet implemented (1.3)")
     def test_institution_too_long(self, test_client):
         """Test that institution > 500 chars returns 422."""
         response = test_client.post(
@@ -111,7 +104,6 @@ class TestFieldLengthLimits:
         )
         assert response.status_code == 422
 
-    @pytest.mark.xfail(reason="Field length limits not yet implemented (1.3)")
     def test_order_description_too_long(self, test_client):
         """Test that order_description > 2000 chars returns 422."""
         response = test_client.post(
