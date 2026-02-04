@@ -286,7 +286,7 @@ For a team preparing Cliver for production:
 | 2.1 | Logging | ☑ Done | 2026-02-04 |
 | 2.2 | Error sanitization | ☑ Done | 2026-02-04 |
 | 2.3 | Email validation | ☑ Done | 2026-02-04 |
-| 3.1 | Dependency scanning | ☐ Not started | |
+| 3.1 | Dependency scanning | ☑ Done | 2026-02-04 |
 | 3.2 | Request ID tracking | ☑ Done | 2026-02-04 |
-| 3.3 | Prompt injection docs | ☐ Not started | |
-| 3.4 | Remove hardcoded header | ☐ Not started | |
+| 3.3 | Prompt injection docs | ☑ Done | 2026-02-04 |
+| 3.4 | Remove hardcoded header | ☑ Done | 2026-02-04 |
