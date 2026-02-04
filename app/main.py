@@ -1,10 +1,12 @@
 """FastAPI application for KYC verification."""
 
 import asyncio
+import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Security
+from fastapi.security import APIKeyHeader
 
 # Load environment variables from .env file
 load_dotenv()
@@ -54,6 +56,17 @@ EXTRACTION_MODEL = "google/gemini-3-flash-preview"
 
 # Sanctions criterion name
 SANCTIONS_CRITERION = "Sanctions and Export Control Screening"
+
+# API Key authentication
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=True)
+
+
+def verify_api_key(api_key: str = Security(api_key_header)) -> str:
+    """Verify the API key from the X-API-Key header."""
+    expected_key = os.environ.get("CLIVER_API_KEY")
+    if not expected_key or api_key != expected_key:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    return api_key
 
 
 def _format_tool_context(tool_calls: list[RawToolCall]) -> str:
@@ -157,7 +170,10 @@ def _build_summary_prompt(
 
 
 @app.post("/verify", response_model=KYCResponse)
-async def verify_customer(request: KYCRequest) -> KYCResponse:
+async def verify_customer(
+    request: KYCRequest,
+    api_key: str = Security(verify_api_key),
+) -> KYCResponse:
     """
     Run know-your-customer checks on a life-science customer.
 
@@ -165,6 +181,8 @@ async def verify_customer(request: KYCRequest) -> KYCResponse:
     1. Checks affiliation, web domain, institution legitimacy, and sanctions screening
     2. Finds relevant work from the customer/their institution if provided details on the order
     3. Returns summary of findings with full audit trail
+
+    Requires X-API-Key header for authentication.
     """
     try:
         client = OpenRouterClient()

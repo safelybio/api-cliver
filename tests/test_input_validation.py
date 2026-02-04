@@ -2,11 +2,23 @@
 
 These tests verify:
 - Required field validation
-- Field length limits (after 1.3 implementation)
+- Field length limits
 - Email format validation (after 2.3 implementation)
 """
 
+import json
+
 import pytest
+
+from tests.conftest import (
+    build_openrouter_chat_reply,
+    build_openrouter_responses_reply,
+    build_verification_determination_response,
+    build_verification_evidence_response,
+)
+
+# Standard headers for authenticated requests
+AUTH_HEADERS = {"X-API-Key": "test-api-key"}
 
 
 class TestRequiredFields:
@@ -20,6 +32,7 @@ class TestRequiredFields:
                 "email": "test@example.edu",
                 "institution": "Example University",
             },
+            headers=AUTH_HEADERS,
         )
         assert response.status_code == 422
 
@@ -31,6 +44,7 @@ class TestRequiredFields:
                 "customer_name": "Test User",
                 "institution": "Example University",
             },
+            headers=AUTH_HEADERS,
         )
         assert response.status_code == 422
 
@@ -42,12 +56,13 @@ class TestRequiredFields:
                 "customer_name": "Test User",
                 "email": "test@example.edu",
             },
+            headers=AUTH_HEADERS,
         )
         assert response.status_code == 422
 
     def test_empty_request_body(self, test_client):
         """Test that empty request body returns 422."""
-        response = test_client.post("/verify", json={})
+        response = test_client.post("/verify", json={}, headers=AUTH_HEADERS)
         assert response.status_code == 422
 
     def test_null_required_field(self, test_client):
@@ -59,6 +74,7 @@ class TestRequiredFields:
                 "email": "test@example.edu",
                 "institution": "Example University",
             },
+            headers=AUTH_HEADERS,
         )
         assert response.status_code == 422
 
@@ -75,6 +91,7 @@ class TestFieldLengthLimits:
                 "email": "test@example.edu",
                 "institution": "Example University",
             },
+            headers=AUTH_HEADERS,
         )
         assert response.status_code == 422
 
@@ -89,6 +106,7 @@ class TestFieldLengthLimits:
                 "email": f"{long_local}@example.edu",
                 "institution": "Example University",
             },
+            headers=AUTH_HEADERS,
         )
         assert response.status_code == 422
 
@@ -101,6 +119,7 @@ class TestFieldLengthLimits:
                 "email": "test@example.edu",
                 "institution": "x" * 501,
             },
+            headers=AUTH_HEADERS,
         )
         assert response.status_code == 422
 
@@ -114,14 +133,15 @@ class TestFieldLengthLimits:
                 "institution": "Example University",
                 "order_description": "x" * 2001,
             },
+            headers=AUTH_HEADERS,
         )
         assert response.status_code == 422
 
     def test_customer_name_at_limit(self, httpx_mock, test_client, mock_tavily):
         """Test that customer_name at 200 chars is accepted (boundary test)."""
-        # This test verifies behavior at the boundary, useful after 1.3
-        # For now, it just ensures we don't crash on longer names
-        pass  # Placeholder - will be meaningful after 1.3
+        # This test verifies behavior at the boundary
+        # For now, it just ensures we don't crash on names at the limit
+        pass  # Placeholder
 
 
 class TestEmailValidation:
@@ -141,6 +161,7 @@ class TestEmailValidation:
                 "email": "not-an-email",
                 "institution": "Example University",
             },
+            headers=AUTH_HEADERS,
         )
         assert response.status_code == 422
 
@@ -154,6 +175,7 @@ class TestEmailValidation:
                 "email": "test@",
                 "institution": "Example University",
             },
+            headers=AUTH_HEADERS,
         )
         assert response.status_code == 422
 
@@ -167,6 +189,7 @@ class TestEmailValidation:
                 "email": "@example.edu",
                 "institution": "Example University",
             },
+            headers=AUTH_HEADERS,
         )
         assert response.status_code == 422
 
@@ -182,15 +205,6 @@ class TestOptionalFields:
     @pytest.mark.httpx_mock(can_send_already_matched_responses=True)
     def test_order_description_optional(self, test_client, httpx_mock, mock_tavily):
         """Test that order_description is truly optional."""
-        # Set up mocks for a successful request
-        from tests.conftest import (
-            build_openrouter_chat_reply,
-            build_openrouter_responses_reply,
-            build_verification_determination_response,
-            build_verification_evidence_response,
-        )
-        import json
-
         httpx_mock.add_response(
             url="https://openrouter.ai/api/v1/responses",
             json=build_openrouter_responses_reply("Verification completed."),
@@ -220,6 +234,7 @@ class TestOptionalFields:
                 "institution": "Example University",
                 # No order_description
             },
+            headers=AUTH_HEADERS,
         )
 
         assert response.status_code == 200
@@ -227,14 +242,6 @@ class TestOptionalFields:
     @pytest.mark.httpx_mock(can_send_already_matched_responses=True)
     def test_empty_order_description_skips_work_prompt(self, test_client, httpx_mock, mock_tavily):
         """Test that empty string order_description skips work prompt (falsy value)."""
-        from tests.conftest import (
-            build_openrouter_chat_reply,
-            build_openrouter_responses_reply,
-            build_verification_determination_response,
-            build_verification_evidence_response,
-        )
-        import json
-
         # Empty string is falsy in Python, so work prompt should be skipped
         # Only need verification prompt and 3 extractions (no work extraction)
         httpx_mock.add_response(
@@ -266,6 +273,7 @@ class TestOptionalFields:
                 "institution": "Example University",
                 "order_description": "",  # Empty string is falsy
             },
+            headers=AUTH_HEADERS,
         )
 
         assert response.status_code == 200

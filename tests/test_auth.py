@@ -1,13 +1,18 @@
-"""Tests for authentication (requires 1.1 implementation).
+"""Tests for API key authentication."""
 
-These tests verify API key authentication once implemented.
-All tests are marked as expected failures until 1.1 is implemented.
-"""
+import json
 
 import pytest
 
+from tests.conftest import (
+    build_background_work_response,
+    build_openrouter_chat_reply,
+    build_openrouter_responses_reply,
+    build_verification_determination_response,
+    build_verification_evidence_response,
+)
 
-@pytest.mark.xfail(reason="Authentication not yet implemented (1.1)")
+
 class TestAPIKeyAuthentication:
     """Tests for API key authentication."""
 
@@ -34,24 +39,22 @@ class TestAPIKeyAuthentication:
         )
         assert response.status_code == 401
 
+    @pytest.mark.httpx_mock(can_send_already_matched_responses=True)
     def test_verify_with_valid_api_key(
         self, test_client, sample_kyc_request, httpx_mock, mock_tavily
     ):
         """Test that /verify with valid API key succeeds."""
-        from tests.conftest import (
-            build_openrouter_chat_reply,
-            build_openrouter_responses_reply,
-            build_verification_determination_response,
-            build_verification_evidence_response,
-            build_background_work_response,
-        )
-        import json
-
-        # Set up mocks
+        # Set up mocks for verification prompt
         httpx_mock.add_response(
             url="https://openrouter.ai/api/v1/responses",
             json=build_openrouter_responses_reply("Verification completed."),
         )
+        # Work prompt (since sample_kyc_request includes order_description)
+        httpx_mock.add_response(
+            url="https://openrouter.ai/api/v1/responses",
+            json=build_openrouter_responses_reply("Work completed."),
+        )
+        # Extraction calls
         httpx_mock.add_response(
             url="https://openrouter.ai/api/v1/chat/completions",
             json=build_openrouter_chat_reply(
@@ -75,12 +78,11 @@ class TestAPIKeyAuthentication:
             json=build_openrouter_chat_reply("Summary."),
         )
 
-        # This test will need the actual valid key from environment
-        # For now, we use a placeholder that should match CLIVER_API_KEY
+        # Use the API key from mock_env fixture (test-api-key)
         response = test_client.post(
             "/verify",
             json=sample_kyc_request,
-            headers={"X-API-Key": "valid-test-key"},
+            headers={"X-API-Key": "test-api-key"},
         )
         assert response.status_code == 200
 

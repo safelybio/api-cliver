@@ -25,6 +25,7 @@ def mock_env():
         "OPENROUTER_API_KEY": "test-openrouter-key",
         "TAVILY_API_KEY": "test-tavily-key",
         "SCREENING_LIST_API_KEY": "test-screening-key",
+        "CLIVER_API_KEY": "test-api-key",
     }
     with patch.dict(os.environ, env_vars, clear=False):
         yield env_vars

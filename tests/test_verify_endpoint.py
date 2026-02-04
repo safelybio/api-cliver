@@ -64,7 +64,11 @@ class TestVerifyEndpointStructure:
             ),
         )
 
-        response = test_client.post("/verify", json=sample_kyc_request)
+        response = test_client.post(
+            "/verify",
+            json=sample_kyc_request,
+            headers={"X-API-Key": "test-api-key"},
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -130,7 +134,11 @@ class TestVerifyEndpointStructure:
             json=build_openrouter_chat_reply("All clear."),
         )
 
-        response = test_client.post("/verify", json=sample_kyc_request)
+        response = test_client.post(
+            "/verify",
+            json=sample_kyc_request,
+            headers={"X-API-Key": "test-api-key"},
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -171,7 +179,11 @@ class TestVerifyEndpointMinimal:
             json=build_openrouter_chat_reply("Verified."),
         )
 
-        response = test_client.post("/verify", json=sample_kyc_request_minimal)
+        response = test_client.post(
+            "/verify",
+            json=sample_kyc_request_minimal,
+            headers={"X-API-Key": "test-api-key"},
+        )
 
         assert response.status_code == 200
         data = response.json()
