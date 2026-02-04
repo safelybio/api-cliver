@@ -192,6 +192,141 @@ class TestVerifyEndpointMinimal:
         assert data.get("background_work") is None
 
 
+@pytest.mark.httpx_mock(can_send_already_matched_responses=True)
+class TestVerifyEndpointHannaPalya:
+    """End-to-end test for Hanna Palya at University of Warwick."""
+
+    @pytest.fixture
+    def hanna_palya_request(self):
+        """Customer data for Hanna Palya."""
+        return {
+            "customer_name": "Hanna Palya",
+            "email": "hanna.palya@warwick.ac.uk",
+            "institution": "Institute for Global Pandemic Planning, University of Warwick",
+        }
+
+    @pytest.fixture
+    def mock_tavily_warwick(self):
+        """Mock TavilyClient with Warwick-specific search results."""
+        from unittest.mock import MagicMock, patch
+
+        mock_client = MagicMock()
+        mock_client.search.return_value = {
+            "results": [
+                {
+                    "url": "https://warwick.ac.uk/fac/cross_fac/igpp/who/hanna-palya",
+                    "title": "Hanna Palya - Institute for Global Pandemic Planning",
+                    "content": "Hanna Palya is a researcher at the Institute for Global Pandemic Planning at the University of Warwick, focusing on pandemic preparedness and response.",
+                }
+            ]
+        }
+
+        with patch("app.openrouter.TavilyClient", return_value=mock_client):
+            yield mock_client
+
+    def _build_warwick_evidence_response(self):
+        """Build evidence response for Warwick researcher."""
+        return {
+            "rows": [
+                {
+                    "criterion": "Customer Institutional Affiliation",
+                    "sources": ["web1"],
+                    "evidence_summary": "Hanna Palya confirmed as researcher at the Institute for Global Pandemic Planning, University of Warwick.",
+                },
+                {
+                    "criterion": "Institution Type and Biomedical Focus",
+                    "sources": ["web1"],
+                    "evidence_summary": "University of Warwick is a major UK research university. The Institute for Global Pandemic Planning focuses on pandemic preparedness research.",
+                },
+                {
+                    "criterion": "Email Domain Verification",
+                    "sources": ["web1"],
+                    "evidence_summary": "Email domain warwick.ac.uk matches the stated institution University of Warwick.",
+                },
+                {
+                    "criterion": "Sanctions and Export Control Screening",
+                    "sources": ["screen1"],
+                    "evidence_summary": "No matches found in consolidated screening list.",
+                },
+            ]
+        }
+
+    def _build_warwick_determination_response(self):
+        """Build determination response - all NO FLAG."""
+        return {
+            "rows": [
+                {"criterion": "Customer Institutional Affiliation", "flag": "NO FLAG"},
+                {"criterion": "Institution Type and Biomedical Focus", "flag": "NO FLAG"},
+                {"criterion": "Email Domain Verification", "flag": "NO FLAG"},
+                {"criterion": "Sanctions and Export Control Screening", "flag": "NO FLAG"},
+            ]
+        }
+
+    def test_verify_hanna_palya_passes(
+        self, httpx_mock, test_client, hanna_palya_request, mock_tavily_warwick
+    ):
+        """Test that Hanna Palya verification passes with PASS status."""
+        # Mock OpenRouter /responses API - verification prompt
+        httpx_mock.add_response(
+            url="https://openrouter.ai/api/v1/responses",
+            json=build_openrouter_responses_reply(
+                "## Verification completed.\n\n"
+                "Hanna Palya verified as researcher at University of Warwick."
+            ),
+        )
+
+        # Mock OpenRouter /chat/completions API (extraction calls)
+        httpx_mock.add_response(
+            url="https://openrouter.ai/api/v1/chat/completions",
+            json=build_openrouter_chat_reply(
+                json.dumps(self._build_warwick_evidence_response())
+            ),
+        )
+        httpx_mock.add_response(
+            url="https://openrouter.ai/api/v1/chat/completions",
+            json=build_openrouter_chat_reply(
+                json.dumps(self._build_warwick_determination_response())
+            ),
+        )
+        # Summary generation
+        httpx_mock.add_response(
+            url="https://openrouter.ai/api/v1/chat/completions",
+            json=build_openrouter_chat_reply(
+                "Verified researcher at the Institute for Global Pandemic Planning, University of Warwick."
+            ),
+        )
+
+        response = test_client.post(
+            "/verify",
+            json=hanna_palya_request,
+            headers={"X-API-Key": "test-api-key"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # Should pass with all NO FLAG determinations
+        assert data["decision"]["status"] == "PASS"
+        assert data["decision"]["flags_count"] == 0
+
+        # Verify all 4 checks present
+        assert len(data["checks"]) == 4
+
+        # Verify each check has expected structure
+        criteria = [check["criterion"] for check in data["checks"]]
+        assert "Customer Institutional Affiliation" in criteria
+        assert "Institution Type and Biomedical Focus" in criteria
+        assert "Email Domain Verification" in criteria
+        assert "Sanctions and Export Control Screening" in criteria
+
+        # All checks should have NO FLAG status
+        for check in data["checks"]:
+            assert check["status"] == "NO FLAG"
+
+        # No background_work since no order_description provided
+        assert data.get("background_work") is None
+
+
 class TestHealthEndpoint:
     """Tests for /health endpoint."""
 
