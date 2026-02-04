@@ -1,5 +1,7 @@
 scripts/**/*
-tests/**/*
+# Exclude test data files but track test code
+tests/**/*.txt
+tests/__pycache__/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

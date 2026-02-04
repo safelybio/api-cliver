@@ -1,0 +1,59 @@
+{
+  "web_search": {
+    "results": [
+      {
+        "url": "https://biology.mit.edu/staff/jane-smith",
+        "title": "Jane Smith - MIT Biology",
+        "content": "Dr. Jane Smith is an Associate Professor in the Department of Biology at MIT, specializing in molecular biology and virology research."
+      },
+      {
+        "url": "https://mit.edu/",
+        "title": "MIT - Massachusetts Institute of Technology",
+        "content": "MIT is a world-renowned research university located in Cambridge, Massachusetts."
+      }
+    ]
+  },
+  "screening_list_no_match": {
+    "results": []
+  },
+  "screening_list_match": {
+    "results": [
+      {
+        "name": "John Doe",
+        "addresses": [{"country": "Iran"}],
+        "programs": ["SDGT", "IRAN"],
+        "source": "Specially Designated Nationals (SDN)"
+      }
+    ]
+  },
+  "epmc_search": {
+    "results": [
+      {
+        "pmid": "12345678",
+        "title": "Structure of SARS-CoV-2 spike protein receptor binding domain",
+        "authors": [
+          {"name": "Smith J"},
+          {"name": "Jones A"}
+        ],
+        "pub_year": "2023",
+        "doi": "10.1000/example.12345",
+        "journal": "Nature"
+      }
+    ]
+  },
+  "orcid_profile": {
+    "orcid_id": "0000-0001-2345-6789",
+    "orcid_url": "https://orcid.org/0000-0001-2345-6789",
+    "given_name": "Jane",
+    "family_name": "Smith",
+    "credit_name": "Jane Smith",
+    "emails": ["jsmith@mit.edu"],
+    "affiliations": [
+      {
+        "organization": "Massachusetts Institute of Technology",
+        "department": "Biology",
+        "role": "Associate Professor"
+      }
+    ]
+  }
+}
