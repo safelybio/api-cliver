@@ -280,13 +280,13 @@ For a team preparing Cliver for production:
 
 | ID | Task | Status | Completed |
 |----|------|--------|-----------|
-| 1.1 | Authentication | ☐ Not started | |
-| 1.2 | Rate limiting | ☐ Not started | |
-| 1.3 | Input length limits | ☐ Not started | |
-| 2.1 | Logging | ☐ Not started | |
-| 2.2 | Error sanitization | ☐ Not started | |
-| 2.3 | Email validation | ☐ Not started | |
+| 1.1 | Authentication | ☑ Done | 2026-02-04 |
+| 1.2 | Rate limiting | ☑ Done | 2026-02-04 |
+| 1.3 | Input length limits | ☑ Done | 2026-02-04 |
+| 2.1 | Logging | ☑ Done | 2026-02-04 |
+| 2.2 | Error sanitization | ☑ Done | 2026-02-04 |
+| 2.3 | Email validation | ☑ Done | 2026-02-04 |
 | 3.1 | Dependency scanning | ☐ Not started | |
-| 3.2 | Request ID tracking | ☐ Not started | |
+| 3.2 | Request ID tracking | ☑ Done | 2026-02-04 |
 | 3.3 | Prompt injection docs | ☐ Not started | |
 | 3.4 | Remove hardcoded header | ☐ Not started | |
