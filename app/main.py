@@ -5,6 +5,7 @@ import logging
 import os
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -27,6 +28,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+from app.constants import TOOL_CONTEXT_TRUNCATION
 from app.models import (
     BACKGROUND_WORK_SCHEMA,
     VERIFICATION_DETERMINATION_SCHEMA,
@@ -145,8 +147,8 @@ def _format_tool_context(tool_calls: list[RawToolCall]) -> str:
         lines.append(f"\n[{tc.tool_name}]:")
         # Truncate long results for context
         result_preview = (
-            tc.model_output[:2000]
-            if len(tc.model_output) > 2000
+            tc.model_output[:TOOL_CONTEXT_TRUNCATION]
+            if len(tc.model_output) > TOOL_CONTEXT_TRUNCATION
             else tc.model_output
         )
         lines.append(result_preview)
@@ -235,6 +237,172 @@ def _build_summary_prompt(
     )
 
 
+@dataclass
+class PromptResults:
+    """Results from running verification and work prompts."""
+
+    verification: CompletionResult
+    work: CompletionResult | None
+    id_counters: dict[str, int]
+
+
+@dataclass
+class ExtractionResults:
+    """Results from structured extraction."""
+
+    evidence: list[VerificationEvidence]
+    determinations: list[VerificationDetermination]
+    background_work: list[BackgroundWork] | None
+
+
+def _run_prompts(
+    client: OpenRouterClient,
+    customer_info: str,
+    has_order: bool,
+    request_id: str,
+) -> PromptResults:
+    """Run verification and optional work prompts with tools."""
+    id_counters: dict[str, int] = {}
+
+    verification_prompt = VERIFICATION_PROMPT.replace("{{customer_info}}", customer_info)
+    try:
+        verification_result = client.complete_with_tools(
+            verification_prompt,
+            model=MAIN_MODEL,
+            id_counters=id_counters,
+        )
+    except Exception as e:
+        logger.error(
+            f"request_id={request_id} | verification_prompt_failed | error={e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=502, detail="Verification service temporarily unavailable"
+        ) from e
+
+    work_result: CompletionResult | None = None
+    if has_order:
+        work_prompt = WORK_PROMPT.replace("{{customer_info}}", customer_info)
+        try:
+            work_result = client.complete_with_tools(
+                work_prompt,
+                model=MAIN_MODEL,
+                id_counters=id_counters,
+            )
+        except Exception as e:
+            logger.error(
+                f"request_id={request_id} | work_prompt_failed | error={e}",
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=502, detail="Verification service temporarily unavailable"
+            ) from e
+
+    return PromptResults(
+        verification=verification_result,
+        work=work_result,
+        id_counters=id_counters,
+    )
+
+
+async def _run_extractions(
+    client: OpenRouterClient,
+    prompt_results: PromptResults,
+    request_id: str,
+) -> ExtractionResults:
+    """Run structured extractions on prompt results."""
+    verification_context = prompt_results.verification.text
+    verification_context += _format_tool_context(prompt_results.verification.tool_calls)
+
+    work_context = None
+    if prompt_results.work:
+        work_context = prompt_results.work.text
+        work_context += _format_tool_context(prompt_results.work.tool_calls)
+
+    try:
+        extraction_tasks = [
+            client.extract_structured_async(
+                verification_context,
+                EXTRACTION_PROMPT_EVIDENCE,
+                VERIFICATION_EVIDENCE_SCHEMA,
+                model=EXTRACTION_MODEL,
+            ),
+            client.extract_structured_async(
+                verification_context,
+                EXTRACTION_PROMPT_DETERMINATIONS,
+                VERIFICATION_DETERMINATION_SCHEMA,
+                model=EXTRACTION_MODEL,
+            ),
+        ]
+
+        if work_context:
+            extraction_tasks.append(
+                client.extract_structured_async(
+                    work_context,
+                    EXTRACTION_PROMPT_WORK,
+                    BACKGROUND_WORK_SCHEMA,
+                    model=EXTRACTION_MODEL,
+                )
+            )
+
+        results = await asyncio.gather(*extraction_tasks)
+
+        evidence_data = results[0]
+        determinations_data = results[1]
+        work_data = results[2] if len(results) > 2 else None
+
+    except Exception as e:
+        logger.error(
+            f"request_id={request_id} | extraction_failed | error={e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=502, detail="Verification service temporarily unavailable"
+        ) from e
+
+    evidence_list = [VerificationEvidence(**row) for row in evidence_data["rows"]]
+    determinations = [
+        VerificationDetermination(**row) for row in determinations_data["rows"]
+    ]
+
+    background_work: list[BackgroundWork] | None = None
+    if work_data:
+        work_rows = [BackgroundWorkRow(**row) for row in work_data["rows"]]
+        background_work = _convert_background_work(work_rows)
+
+    return ExtractionResults(
+        evidence=evidence_list,
+        determinations=determinations,
+        background_work=background_work,
+    )
+
+
+async def _generate_summary(
+    client: OpenRouterClient,
+    customer_info: str,
+    prompt_results: PromptResults,
+    status: str,
+    request_id: str,
+) -> str:
+    """Generate decision summary using LLM with fallback."""
+    try:
+        summary_prompt = _build_summary_prompt(
+            customer_info,
+            prompt_results.verification.text,
+            prompt_results.work.text if prompt_results.work else None,
+        )
+        summary = await client.generate_text_async(summary_prompt, model=EXTRACTION_MODEL)
+        return summary.strip().strip('"').strip("'")
+    except Exception as e:
+        logger.warning(f"request_id={request_id} | summary_generation_failed | error={e}")
+        if status == "PASS":
+            return "All verification criteria passed."
+        elif status == "FLAG":
+            return "Sanctions screening flagged - requires immediate review."
+        else:
+            return "Some criteria require manual review."
+
+
 @app.post("/verify", response_model=KYCResponse)
 @limiter.limit("60/minute")
 async def verify_customer(
@@ -268,159 +436,22 @@ async def verify_customer(
     customer_info = f"""Name: {kyc_request.customer_name}
 Institution: {kyc_request.institution}
 Email: {kyc_request.email}"""
-
     if kyc_request.order_description:
         customer_info += f"\nOrder: {kyc_request.order_description}"
 
-    # Shared ID counters for consistent IDs across both prompts
-    id_counters: dict[str, int] = {}
+    # Run prompts and extractions
+    prompt_results = _run_prompts(client, customer_info, has_order, request_id)
+    extraction_results = await _run_extractions(client, prompt_results, request_id)
 
-    # Run verification prompt with tools
-    verification_prompt = VERIFICATION_PROMPT.replace(
-        "{{customer_info}}", customer_info
-    )
-    try:
-        verification_result = client.complete_with_tools(
-            verification_prompt,
-            model=MAIN_MODEL,
-            id_counters=id_counters,
-        )
-    except Exception as e:
-        logger.error(
-            f"request_id={request_id} | verification_prompt_failed | error={e}",
-            exc_info=True,
-        )
-        raise HTTPException(
-            status_code=502, detail="Verification service temporarily unavailable"
-        ) from e
-
-    # Run work prompt with tools only if order_description provided
-    work_result: CompletionResult | None = None
-    if kyc_request.order_description:
-        work_prompt = WORK_PROMPT.replace("{{customer_info}}", customer_info)
-        try:
-            work_result = client.complete_with_tools(
-                work_prompt,
-                model=MAIN_MODEL,
-                id_counters=id_counters,  # Use same counters
-            )
-        except Exception as e:
-            logger.error(
-                f"request_id={request_id} | work_prompt_failed | error={e}",
-                exc_info=True,
-            )
-            raise HTTPException(
-                status_code=502, detail="Verification service temporarily unavailable"
-            ) from e
-
-    # Build extraction contexts
-    verification_context = verification_result.text
-    verification_context += _format_tool_context(verification_result.tool_calls)
-
-    work_context = None
-    if work_result:
-        work_context = work_result.text
-        work_context += _format_tool_context(work_result.tool_calls)
-
-    # Run extractions in parallel
-    try:
-        extraction_tasks = [
-            client.extract_structured_async(
-                verification_context,
-                EXTRACTION_PROMPT_EVIDENCE,
-                VERIFICATION_EVIDENCE_SCHEMA,
-                model=EXTRACTION_MODEL,
-            ),
-            client.extract_structured_async(
-                verification_context,
-                EXTRACTION_PROMPT_DETERMINATIONS,
-                VERIFICATION_DETERMINATION_SCHEMA,
-                model=EXTRACTION_MODEL,
-            ),
-        ]
-
-        # Add work extraction if applicable
-        if work_context:
-            extraction_tasks.append(
-                client.extract_structured_async(
-                    work_context,
-                    EXTRACTION_PROMPT_WORK,
-                    BACKGROUND_WORK_SCHEMA,
-                    model=EXTRACTION_MODEL,
-                )
-            )
-
-        results = await asyncio.gather(*extraction_tasks)
-
-        evidence_data = results[0]
-        determinations_data = results[1]
-        work_data = results[2] if len(results) > 2 else None
-
-    except Exception as e:
-        logger.error(
-            f"request_id={request_id} | extraction_failed | error={e}",
-            exc_info=True,
-        )
-        raise HTTPException(
-            status_code=502, detail="Verification service temporarily unavailable"
-        ) from e
-
-    # Parse extracted data
-    evidence_list = [VerificationEvidence(**row) for row in evidence_data["rows"]]
-    determinations = [
-        VerificationDetermination(**row) for row in determinations_data["rows"]
-    ]
-
-    # Convert background work
-    background_work: list[BackgroundWork] | None = None
-    if work_data:
-        work_rows = [BackgroundWorkRow(**row) for row in work_data["rows"]]
-        background_work = _convert_background_work(work_rows)
-
-    # Build checks
-    checks = _merge_checks(evidence_list, determinations)
-
-    # Compute decision status
-    status, flags_count = _compute_decision_status(determinations)
-
-    # Generate summary with LLM
-    try:
-        summary_prompt = _build_summary_prompt(
-            customer_info,
-            verification_result.text,
-            work_result.text if work_result else None,
-        )
-        summary = await client.generate_text_async(summary_prompt, model=EXTRACTION_MODEL)
-        # Clean up summary (remove quotes, word counts, etc.)
-        summary = summary.strip().strip('"').strip("'")
-    except Exception as e:
-        # Fallback to simple summary if LLM fails
-        logger.warning(f"request_id={request_id} | summary_generation_failed | error={e}")
-        if status == "PASS":
-            summary = "All verification criteria passed."
-        elif status == "FLAG":
-            summary = "Sanctions screening flagged - requires immediate review."
-        else:
-            summary = "Some criteria require manual review."
-
-    decision = Decision(
-        status=status,
-        flags_count=flags_count,
-        summary=summary,
-    )
+    # Build response
+    checks = _merge_checks(extraction_results.evidence, extraction_results.determinations)
+    status, flags_count = _compute_decision_status(extraction_results.determinations)
+    summary = await _generate_summary(client, customer_info, prompt_results, status, request_id)
 
     # Combine all tool calls for audit
-    all_tool_calls = list(verification_result.tool_calls)
-    if work_result:
-        all_tool_calls.extend(work_result.tool_calls)
-
-    audit = Audit(
-        tool_calls=normalize_tool_calls(all_tool_calls),
-        raw=RawOutput(
-            verification=verification_result.text,
-            work=work_result.text if work_result else None,
-        ),
-    )
+    all_tool_calls = list(prompt_results.verification.tool_calls)
+    if prompt_results.work:
+        all_tool_calls.extend(prompt_results.work.tool_calls)
 
     logger.info(
         f"request_id={request_id} | verify_completed | "
@@ -428,10 +459,16 @@ Email: {kyc_request.email}"""
     )
 
     return KYCResponse(
-        decision=decision,
+        decision=Decision(status=status, flags_count=flags_count, summary=summary),
         checks=checks,
-        background_work=background_work,
-        audit=audit,
+        background_work=extraction_results.background_work,
+        audit=Audit(
+            tool_calls=normalize_tool_calls(all_tool_calls),
+            raw=RawOutput(
+                verification=prompt_results.verification.text,
+                work=prompt_results.work.text if prompt_results.work else None,
+            ),
+        ),
     )
 
 

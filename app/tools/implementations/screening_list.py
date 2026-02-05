@@ -9,11 +9,11 @@ import os
 
 import httpx
 
-from app.tools.registry import ToolOutput
+from app.constants import TIMEOUT_SHORT
+from app.tools.registry import ToolOutput, http_error_output
 
 # API Configuration
 SCREENING_LIST_BASE_URL = "https://data.trade.gov/consolidated_screening_list/v1"
-TIMEOUT = 30
 
 
 def _get_api_key() -> str:
@@ -53,7 +53,7 @@ def _search_single(client: httpx.Client, api_key: str, query: str) -> list[dict]
         f"{SCREENING_LIST_BASE_URL}/search",
         params=params,
         headers={"Accept": "application/json", "User-Agent": "KYC-API/1.0"},
-        timeout=TIMEOUT,
+        timeout=TIMEOUT_SHORT,
     )
     response.raise_for_status()
 
@@ -129,21 +129,5 @@ def search_screening_list(queries: list[str]) -> ToolOutput:
             items=[],
             metadata={"error": True, "message": str(e), "queries_searched": queries},
         )
-    except httpx.HTTPStatusError as e:
-        return ToolOutput(
-            items=[],
-            metadata={
-                "error": True,
-                "message": f"API error: {e.response.status_code}",
-                "queries_searched": queries,
-            },
-        )
-    except httpx.RequestError as e:
-        return ToolOutput(
-            items=[],
-            metadata={
-                "error": True,
-                "message": f"Request failed: {str(e)}",
-                "queries_searched": queries,
-            },
-        )
+    except (httpx.HTTPStatusError, httpx.RequestError) as e:
+        return http_error_output(e, {"queries_searched": queries})

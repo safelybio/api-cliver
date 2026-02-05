@@ -9,12 +9,12 @@ from typing import Literal
 
 import httpx
 
-from app.tools.registry import ToolOutput
+from app.constants import TIMEOUT_SHORT
+from app.tools.registry import ToolOutput, http_error_output
 
 # API Configuration
 EPMC_BASE_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest"
 EPMC_HEADERS = {"Accept": "application/json"}
-TIMEOUT = 30
 
 
 def _clean_field(value: str) -> str:
@@ -195,7 +195,7 @@ def search_epmc(
             f"{EPMC_BASE_URL}/search",
             params=params,
             headers=EPMC_HEADERS,
-            timeout=TIMEOUT,
+            timeout=TIMEOUT_SHORT,
         )
         response.raise_for_status()
         data = response.json()
@@ -221,21 +221,5 @@ def search_epmc(
             },
         )
 
-    except httpx.HTTPStatusError as e:
-        return ToolOutput(
-            items=[],
-            metadata={
-                "error": True,
-                "message": f"EPMC API error: {e.response.status_code} - {str(e)}",
-                "query": query,
-            },
-        )
-    except httpx.RequestError as e:
-        return ToolOutput(
-            items=[],
-            metadata={
-                "error": True,
-                "message": f"Request failed: {str(e)}",
-                "query": query,
-            },
-        )
+    except (httpx.HTTPStatusError, httpx.RequestError) as e:
+        return http_error_output(e, {"query": query})

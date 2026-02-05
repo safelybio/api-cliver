@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 from tavily import TavilyClient  # type: ignore[import-untyped]
 
+from app.constants import SNIPPET_PREVIEW_LENGTH, TIMEOUT_LONG, TIMEOUT_MEDIUM
 from app.models import ToolResult
 from app.tools.registry import ToolOutput, execute_tool, get_responses_tools
 
@@ -104,6 +105,90 @@ def _build_query(tool_name: str, args: dict[str, Any]) -> str:
     return str(args)
 
 
+def _parse_year(value: str | int | None) -> int | None:
+    """Parse a year from a string or int, returning None if invalid."""
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    try:
+        return int(str(value).split("-")[0])
+    except (ValueError, TypeError, IndexError):
+        return None
+
+
+def _extract_web_fields(item: dict) -> dict[str, Any]:
+    """Extract fields for search_web results."""
+    content = item.get("content", "")
+    return {
+        "title": item.get("title", ""),
+        "url": item.get("url", ""),
+        "snippet": content[:SNIPPET_PREVIEW_LENGTH] if content else None,
+    }
+
+
+def _extract_epmc_fields(item: dict) -> dict[str, Any]:
+    """Extract fields for search_epmc results."""
+    doi = item.get("doi", "")
+    authors = item.get("authors", [])
+    author_names = [a.get("name", "") for a in authors] if isinstance(authors, list) else None
+    return {
+        "title": item.get("title", ""),
+        "url": f"https://doi.org/{doi}" if doi else "",
+        "authors": author_names if author_names else None,
+        "year": _parse_year(item.get("pub_year")),
+    }
+
+
+def _extract_screening_fields(item: dict) -> dict[str, Any]:
+    """Extract fields for search_screening_list results."""
+    return {
+        "title": item.get("name", ""),
+        "url": "",
+        "programs": item.get("programs"),
+    }
+
+
+def _extract_orcid_profile_fields(item: dict) -> dict[str, Any]:
+    """Extract fields for get_orcid_profile results."""
+    name = (
+        item.get("credit_name")
+        or f"{item.get('given_name', '')} {item.get('family_name', '')}".strip()
+        or "Unknown"
+    )
+    return {
+        "title": name,
+        "url": item.get("orcid_url", ""),
+    }
+
+
+def _extract_orcid_works_fields(item: dict) -> dict[str, Any]:
+    """Extract fields for search_orcid_works results."""
+    return {
+        "title": item.get("title", ""),
+        "url": item.get("url", ""),
+        "year": _parse_year(item.get("publication_date")),
+    }
+
+
+def _extract_generic_fields(item: dict) -> dict[str, Any]:
+    """Extract fields for unknown tool types (fallback)."""
+    return {
+        "title": item.get("title", str(item)),
+        "url": item.get("url", ""),
+    }
+
+
+# Tool-specific field extractors
+_TOOL_FIELD_EXTRACTORS: dict[str, Any] = {
+    "search_web": _extract_web_fields,
+    "search_epmc": _extract_epmc_fields,
+    "search_screening_list": _extract_screening_fields,
+    "get_orcid_profile": _extract_orcid_profile_fields,
+    "search_orcid_works": _extract_orcid_works_fields,
+}
+
+
 def normalize_tool_calls(raw_calls: list[RawToolCall]) -> list[ToolResult]:
     """Convert raw tool calls to flat list of results for audit section.
 
@@ -113,16 +198,14 @@ def normalize_tool_calls(raw_calls: list[RawToolCall]) -> list[ToolResult]:
     results: list[ToolResult] = []
 
     for tc in raw_calls:
-        # Parse the model output JSON (contains IDs)
         try:
             data = json.loads(tc.model_output)
         except json.JSONDecodeError:
             data = {}
 
         query = _build_query(tc.tool_name, tc.arguments)
-
-        # Extract results with their IDs
         items = data.get("results", [])
+        extractor = _TOOL_FIELD_EXTRACTORS.get(tc.tool_name, _extract_generic_fields)
 
         # Handle no-results case (single item with id at top level)
         if not items and data.get("id"):
@@ -137,93 +220,15 @@ def normalize_tool_calls(raw_calls: list[RawToolCall]) -> list[ToolResult]:
             )
         else:
             for item in items:
-                result_id = item.get("id", "")
-
-                # Build ToolResult based on tool type
-                if tc.tool_name == "search_web":
-                    results.append(
-                        ToolResult(
-                            tool=tc.tool_name,
-                            query=query,
-                            id=result_id,
-                            title=item.get("title", ""),
-                            url=item.get("url", ""),
-                            snippet=item.get("content", "")[:200] if item.get("content") else None,
-                        )
+                fields = extractor(item)
+                results.append(
+                    ToolResult(
+                        tool=tc.tool_name,
+                        query=query,
+                        id=item.get("id", ""),
+                        **fields,
                     )
-                elif tc.tool_name == "search_epmc":
-                    doi = item.get("doi", "")
-                    authors = item.get("authors", [])
-                    author_names = [a.get("name", "") for a in authors] if isinstance(authors, list) else None
-                    year = None
-                    if item.get("pub_year"):
-                        try:
-                            year = int(item["pub_year"])
-                        except (ValueError, TypeError):
-                            pass
-                    results.append(
-                        ToolResult(
-                            tool=tc.tool_name,
-                            query=query,
-                            id=result_id,
-                            title=item.get("title", ""),
-                            url=f"https://doi.org/{doi}" if doi else "",
-                            authors=author_names if author_names else None,
-                            year=year,
-                        )
-                    )
-                elif tc.tool_name == "search_screening_list":
-                    results.append(
-                        ToolResult(
-                            tool=tc.tool_name,
-                            query=query,
-                            id=result_id,
-                            title=item.get("name", ""),
-                            url="",
-                            programs=item.get("programs"),
-                        )
-                    )
-                elif tc.tool_name == "get_orcid_profile":
-                    # Build name from person data
-                    name = item.get("credit_name") or f"{item.get('given_name', '')} {item.get('family_name', '')}".strip() or "Unknown"
-                    results.append(
-                        ToolResult(
-                            tool=tc.tool_name,
-                            query=query,
-                            id=result_id,
-                            title=name,
-                            url=item.get("orcid_url", ""),
-                        )
-                    )
-                elif tc.tool_name == "search_orcid_works":
-                    year = None
-                    pub_date = item.get("publication_date", "")
-                    if pub_date:
-                        try:
-                            year = int(pub_date.split("-")[0])
-                        except (ValueError, TypeError, IndexError):
-                            pass
-                    results.append(
-                        ToolResult(
-                            tool=tc.tool_name,
-                            query=query,
-                            id=result_id,
-                            title=item.get("title", ""),
-                            url=item.get("url", ""),
-                            year=year,
-                        )
-                    )
-                else:
-                    # Generic fallback
-                    results.append(
-                        ToolResult(
-                            tool=tc.tool_name,
-                            query=query,
-                            id=result_id,
-                            title=item.get("title", str(item)),
-                            url=item.get("url", ""),
-                        )
-                    )
+                )
 
     return results
 
@@ -287,7 +292,7 @@ class OpenRouterClient:
                 "tool_choice": "auto",
             }
 
-            with httpx.Client(timeout=120) as client:
+            with httpx.Client(timeout=TIMEOUT_LONG) as client:
                 response = client.post(
                     OPENROUTER_RESPONSES_URL,
                     headers=self.headers,
@@ -370,7 +375,7 @@ class OpenRouterClient:
         Returns:
             Parsed JSON response matching the schema.
         """
-        with httpx.Client(timeout=60) as client:
+        with httpx.Client(timeout=TIMEOUT_MEDIUM) as client:
             response = client.post(
                 OPENROUTER_CHAT_URL,
                 headers=self.headers,
@@ -395,7 +400,7 @@ class OpenRouterClient:
         model: str = "google/gemini-2.5-flash",
     ) -> dict[str, Any]:
         """Async version of extract_structured."""
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=TIMEOUT_MEDIUM) as client:
             response = await client.post(
                 OPENROUTER_CHAT_URL,
                 headers=self.headers,
@@ -418,7 +423,7 @@ class OpenRouterClient:
         model: str = "google/gemini-2.5-flash",
     ) -> str:
         """Generate text response (no structured output)."""
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=TIMEOUT_MEDIUM) as client:
             response = await client.post(
                 OPENROUTER_CHAT_URL,
                 headers=self.headers,

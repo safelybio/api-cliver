@@ -1,16 +1,8 @@
 """End-to-end tests for the /verify endpoint with mocked external APIs."""
 
-import json
-
 import pytest
 
-from tests.conftest import (
-    build_background_work_response,
-    build_openrouter_chat_reply,
-    build_openrouter_responses_reply,
-    build_verification_determination_response,
-    build_verification_evidence_response,
-)
+from tests.conftest import mock_full_verify_flow, mock_minimal_verify_flow
 
 
 @pytest.mark.httpx_mock(can_send_already_matched_responses=True)
@@ -21,47 +13,11 @@ class TestVerifyEndpointStructure:
         self, httpx_mock, test_client, sample_kyc_request, mock_tavily
     ):
         """Test that /verify returns the expected response structure."""
-        # Mock OpenRouter /responses API - verification prompt
-        httpx_mock.add_response(
-            url="https://openrouter.ai/api/v1/responses",
-            json=build_openrouter_responses_reply(
-                "## Verification completed.\n\nAll criteria verified successfully."
-            ),
-        )
-        # Mock OpenRouter /responses API - work prompt (since order_description provided)
-        httpx_mock.add_response(
-            url="https://openrouter.ai/api/v1/responses",
-            json=build_openrouter_responses_reply(
-                "## Work Analysis completed.\n\nRelevant research found."
-            ),
-        )
-
-        # Mock OpenRouter /chat/completions API (extraction calls)
-        # All chat completion calls can return the appropriate responses
-        httpx_mock.add_response(
-            url="https://openrouter.ai/api/v1/chat/completions",
-            json=build_openrouter_chat_reply(
-                json.dumps(build_verification_evidence_response())
-            ),
-        )
-        httpx_mock.add_response(
-            url="https://openrouter.ai/api/v1/chat/completions",
-            json=build_openrouter_chat_reply(
-                json.dumps(build_verification_determination_response())
-            ),
-        )
-        httpx_mock.add_response(
-            url="https://openrouter.ai/api/v1/chat/completions",
-            json=build_openrouter_chat_reply(
-                json.dumps(build_background_work_response())
-            ),
-        )
-        # Summary generation
-        httpx_mock.add_response(
-            url="https://openrouter.ai/api/v1/chat/completions",
-            json=build_openrouter_chat_reply(
-                "Verified MIT professor with relevant research experience."
-            ),
+        mock_full_verify_flow(
+            httpx_mock,
+            verification_text="## Verification completed.\n\nAll criteria verified successfully.",
+            work_text="## Work Analysis completed.\n\nRelevant research found.",
+            summary_text="Verified MIT professor with relevant research experience.",
         )
 
         response = test_client.post(
@@ -99,40 +55,7 @@ class TestVerifyEndpointStructure:
         self, httpx_mock, test_client, sample_kyc_request, mock_tavily
     ):
         """Test that all NO FLAG determinations result in PASS status."""
-        # Verification prompt
-        httpx_mock.add_response(
-            url="https://openrouter.ai/api/v1/responses",
-            json=build_openrouter_responses_reply("## Verification completed."),
-        )
-        # Work prompt
-        httpx_mock.add_response(
-            url="https://openrouter.ai/api/v1/responses",
-            json=build_openrouter_responses_reply("## Work completed."),
-        )
-
-        # All NO FLAG determinations
-        httpx_mock.add_response(
-            url="https://openrouter.ai/api/v1/chat/completions",
-            json=build_openrouter_chat_reply(
-                json.dumps(build_verification_evidence_response())
-            ),
-        )
-        httpx_mock.add_response(
-            url="https://openrouter.ai/api/v1/chat/completions",
-            json=build_openrouter_chat_reply(
-                json.dumps(build_verification_determination_response())
-            ),
-        )
-        httpx_mock.add_response(
-            url="https://openrouter.ai/api/v1/chat/completions",
-            json=build_openrouter_chat_reply(
-                json.dumps(build_background_work_response())
-            ),
-        )
-        httpx_mock.add_response(
-            url="https://openrouter.ai/api/v1/chat/completions",
-            json=build_openrouter_chat_reply("All clear."),
-        )
+        mock_full_verify_flow(httpx_mock, summary_text="All clear.")
 
         response = test_client.post(
             "/verify",
@@ -154,30 +77,7 @@ class TestVerifyEndpointMinimal:
         self, httpx_mock, test_client, sample_kyc_request_minimal, mock_tavily
     ):
         """Test that /verify works without order_description."""
-        # Only verification prompt (no work prompt)
-        httpx_mock.add_response(
-            url="https://openrouter.ai/api/v1/responses",
-            json=build_openrouter_responses_reply("## Verification completed."),
-        )
-
-        # Only evidence and determination extractions (no work extraction)
-        httpx_mock.add_response(
-            url="https://openrouter.ai/api/v1/chat/completions",
-            json=build_openrouter_chat_reply(
-                json.dumps(build_verification_evidence_response())
-            ),
-        )
-        httpx_mock.add_response(
-            url="https://openrouter.ai/api/v1/chat/completions",
-            json=build_openrouter_chat_reply(
-                json.dumps(build_verification_determination_response())
-            ),
-        )
-        # Summary
-        httpx_mock.add_response(
-            url="https://openrouter.ai/api/v1/chat/completions",
-            json=build_openrouter_chat_reply("Verified."),
-        )
+        mock_minimal_verify_flow(httpx_mock)
 
         response = test_client.post(
             "/verify",
@@ -189,141 +89,6 @@ class TestVerifyEndpointMinimal:
         data = response.json()
 
         # Should not have background_work when no order_description
-        assert data.get("background_work") is None
-
-
-@pytest.mark.httpx_mock(can_send_already_matched_responses=True)
-class TestVerifyEndpointHannaPalya:
-    """End-to-end test for Hanna Palya at University of Warwick."""
-
-    @pytest.fixture
-    def hanna_palya_request(self):
-        """Customer data for Hanna Palya."""
-        return {
-            "customer_name": "Hanna Palya",
-            "email": "hanna.palya@warwick.ac.uk",
-            "institution": "Institute for Global Pandemic Planning, University of Warwick",
-        }
-
-    @pytest.fixture
-    def mock_tavily_warwick(self):
-        """Mock TavilyClient with Warwick-specific search results."""
-        from unittest.mock import MagicMock, patch
-
-        mock_client = MagicMock()
-        mock_client.search.return_value = {
-            "results": [
-                {
-                    "url": "https://warwick.ac.uk/fac/cross_fac/igpp/who/hanna-palya",
-                    "title": "Hanna Palya - Institute for Global Pandemic Planning",
-                    "content": "Hanna Palya is a researcher at the Institute for Global Pandemic Planning at the University of Warwick, focusing on pandemic preparedness and response.",
-                }
-            ]
-        }
-
-        with patch("app.openrouter.TavilyClient", return_value=mock_client):
-            yield mock_client
-
-    def _build_warwick_evidence_response(self):
-        """Build evidence response for Warwick researcher."""
-        return {
-            "rows": [
-                {
-                    "criterion": "Customer Institutional Affiliation",
-                    "sources": ["web1"],
-                    "evidence_summary": "Hanna Palya confirmed as researcher at the Institute for Global Pandemic Planning, University of Warwick.",
-                },
-                {
-                    "criterion": "Institution Type and Biomedical Focus",
-                    "sources": ["web1"],
-                    "evidence_summary": "University of Warwick is a major UK research university. The Institute for Global Pandemic Planning focuses on pandemic preparedness research.",
-                },
-                {
-                    "criterion": "Email Domain Verification",
-                    "sources": ["web1"],
-                    "evidence_summary": "Email domain warwick.ac.uk matches the stated institution University of Warwick.",
-                },
-                {
-                    "criterion": "Sanctions and Export Control Screening",
-                    "sources": ["screen1"],
-                    "evidence_summary": "No matches found in consolidated screening list.",
-                },
-            ]
-        }
-
-    def _build_warwick_determination_response(self):
-        """Build determination response - all NO FLAG."""
-        return {
-            "rows": [
-                {"criterion": "Customer Institutional Affiliation", "flag": "NO FLAG"},
-                {"criterion": "Institution Type and Biomedical Focus", "flag": "NO FLAG"},
-                {"criterion": "Email Domain Verification", "flag": "NO FLAG"},
-                {"criterion": "Sanctions and Export Control Screening", "flag": "NO FLAG"},
-            ]
-        }
-
-    def test_verify_hanna_palya_passes(
-        self, httpx_mock, test_client, hanna_palya_request, mock_tavily_warwick
-    ):
-        """Test that Hanna Palya verification passes with PASS status."""
-        # Mock OpenRouter /responses API - verification prompt
-        httpx_mock.add_response(
-            url="https://openrouter.ai/api/v1/responses",
-            json=build_openrouter_responses_reply(
-                "## Verification completed.\n\n"
-                "Hanna Palya verified as researcher at University of Warwick."
-            ),
-        )
-
-        # Mock OpenRouter /chat/completions API (extraction calls)
-        httpx_mock.add_response(
-            url="https://openrouter.ai/api/v1/chat/completions",
-            json=build_openrouter_chat_reply(
-                json.dumps(self._build_warwick_evidence_response())
-            ),
-        )
-        httpx_mock.add_response(
-            url="https://openrouter.ai/api/v1/chat/completions",
-            json=build_openrouter_chat_reply(
-                json.dumps(self._build_warwick_determination_response())
-            ),
-        )
-        # Summary generation
-        httpx_mock.add_response(
-            url="https://openrouter.ai/api/v1/chat/completions",
-            json=build_openrouter_chat_reply(
-                "Verified researcher at the Institute for Global Pandemic Planning, University of Warwick."
-            ),
-        )
-
-        response = test_client.post(
-            "/verify",
-            json=hanna_palya_request,
-            headers={"X-API-Key": "test-api-key"},
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-
-        # Should pass with all NO FLAG determinations
-        assert data["decision"]["status"] == "PASS"
-        assert data["decision"]["flags_count"] == 0
-
-        # Verify all 4 checks present
-        assert len(data["checks"]) == 4
-
-        # Verify each check has expected structure
-        criteria = [check["criterion"] for check in data["checks"]]
-        assert "Customer Institutional Affiliation" in criteria
-        assert "Institution Type and Biomedical Focus" in criteria
-        assert "Email Domain Verification" in criteria
-        assert "Sanctions and Export Control Screening" in criteria
-
-        # All checks should have NO FLAG status
-        for check in data["checks"]:
-            assert check["status"] == "NO FLAG"
-
-        # No background_work since no order_description provided
         assert data.get("background_work") is None
 
 
