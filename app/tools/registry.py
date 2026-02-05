@@ -6,10 +6,47 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import httpx
 import yaml
 from tavily import TavilyClient  # type: ignore[import-untyped]
 
 _CACHE: dict[str, Any] = {}
+
+
+def http_error_output(
+    error: httpx.HTTPStatusError | httpx.RequestError,
+    context: dict[str, Any] | None = None,
+    not_found_message: str | None = None,
+) -> "ToolOutput":
+    """
+    Convert an HTTP error to a ToolOutput with error metadata.
+
+    Args:
+        error: The httpx error to convert.
+        context: Additional metadata to include in the error output.
+        not_found_message: Custom message for 404 errors (if None, uses default).
+
+    Returns:
+        ToolOutput with error=True and error message.
+    """
+    error_context = context or {}
+
+    if isinstance(error, httpx.HTTPStatusError):
+        if error.response.status_code == 404 and not_found_message:
+            message = not_found_message
+        else:
+            message = f"API error: {error.response.status_code} - {error!s}"
+    else:
+        message = f"Request failed: {error!s}"
+
+    return ToolOutput(
+        items=[],
+        metadata={
+            "error": True,
+            "message": message,
+            **error_context,
+        },
+    )
 
 
 @dataclass

@@ -1,14 +1,34 @@
 """FastAPI application for KYC verification."""
 
 import asyncio
+import logging
+import os
+import time
+import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Security
+from fastapi.responses import JSONResponse
+from fastapi.security import APIKeyHeader
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 # Load environment variables from .env file
 load_dotenv()
 
+# Configure logging
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="%(levelname)s | %(asctime)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+
+from app.constants import TOOL_CONTEXT_TRUNCATION
 from app.models import (
     BACKGROUND_WORK_SCHEMA,
     VERIFICATION_DETERMINATION_SCHEMA,
@@ -37,6 +57,31 @@ app = FastAPI(
     version="1.0.0",
 )
 
+
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    """Add request ID to each request for logging correlation."""
+    request_id = str(uuid.uuid4())[:8]
+    request.state.request_id = request_id
+    start_time = time.time()
+
+    response = await call_next(request)
+
+    duration_ms = int((time.time() - start_time) * 1000)
+    response.headers["X-Request-ID"] = request_id
+
+    # Log request completion (no PII)
+    logger.info(
+        f"request_id={request_id} | "
+        f"method={request.method} | "
+        f"path={request.url.path} | "
+        f"status={response.status_code} | "
+        f"duration_ms={duration_ms}"
+    )
+
+    return response
+
+
 # Load prompts at startup
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 VERIFICATION_PROMPT = (PROMPTS_DIR / "verification.txt").read_text()
@@ -55,6 +100,42 @@ EXTRACTION_MODEL = "google/gemini-3-flash-preview"
 # Sanctions criterion name
 SANCTIONS_CRITERION = "Sanctions and Export Control Screening"
 
+# API Key authentication
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=True)
+
+
+def verify_api_key(api_key: str = Security(api_key_header)) -> str:
+    """Verify the API key from the X-API-Key header."""
+    expected_key = os.environ.get("CLIVER_API_KEY")
+    if not expected_key or api_key != expected_key:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    return api_key
+
+
+# Rate limiting - 60 requests per minute per API key (or IP if no key)
+def _get_rate_limit_key(request: Request) -> str:
+    """Rate limit by API key if present, else by IP address."""
+    api_key = request.headers.get("X-API-Key")
+    return api_key if api_key else get_remote_address(request)
+
+
+limiter = Limiter(key_func=_get_rate_limit_key)
+app.state.limiter = limiter
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_exceeded_handler(
+    request: Request, exc: RateLimitExceeded
+) -> JSONResponse:
+    """Handle rate limit exceeded errors."""
+    request_id = getattr(request.state, "request_id", "unknown")
+    logger.warning(f"request_id={request_id} | rate_limit_exceeded")
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Rate limit exceeded. Try again later."},
+        headers={"Retry-After": "60", "X-Request-ID": request_id},
+    )
+
 
 def _format_tool_context(tool_calls: list[RawToolCall]) -> str:
     """Format tool calls as context for extraction prompts."""
@@ -66,8 +147,8 @@ def _format_tool_context(tool_calls: list[RawToolCall]) -> str:
         lines.append(f"\n[{tc.tool_name}]:")
         # Truncate long results for context
         result_preview = (
-            tc.model_output[:2000]
-            if len(tc.model_output) > 2000
+            tc.model_output[:TOOL_CONTEXT_TRUNCATION]
+            if len(tc.model_output) > TOOL_CONTEXT_TRUNCATION
             else tc.model_output
         )
         lines.append(result_preview)
@@ -156,36 +237,34 @@ def _build_summary_prompt(
     )
 
 
-@app.post("/verify", response_model=KYCResponse)
-async def verify_customer(request: KYCRequest) -> KYCResponse:
-    """
-    Run know-your-customer checks on a life-science customer.
+@dataclass
+class PromptResults:
+    """Results from running verification and work prompts."""
 
-    This endpoint:
-    1. Checks affiliation, web domain, institution legitimacy, and sanctions screening
-    2. Finds relevant work from the customer/their institution if provided details on the order
-    3. Returns summary of findings with full audit trail
-    """
-    try:
-        client = OpenRouterClient()
-    except ValueError as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+    verification: CompletionResult
+    work: CompletionResult | None
+    id_counters: dict[str, int]
 
-    # Build customer info string for prompt templates
-    customer_info = f"""Name: {request.customer_name}
-Institution: {request.institution}
-Email: {request.email}"""
 
-    if request.order_description:
-        customer_info += f"\nOrder: {request.order_description}"
+@dataclass
+class ExtractionResults:
+    """Results from structured extraction."""
 
-    # Shared ID counters for consistent IDs across both prompts
+    evidence: list[VerificationEvidence]
+    determinations: list[VerificationDetermination]
+    background_work: list[BackgroundWork] | None
+
+
+def _run_prompts(
+    client: OpenRouterClient,
+    customer_info: str,
+    has_order: bool,
+    request_id: str,
+) -> PromptResults:
+    """Run verification and optional work prompts with tools."""
     id_counters: dict[str, int] = {}
 
-    # Run verification prompt with tools
-    verification_prompt = VERIFICATION_PROMPT.replace(
-        "{{customer_info}}", customer_info
-    )
+    verification_prompt = VERIFICATION_PROMPT.replace("{{customer_info}}", customer_info)
     try:
         verification_result = client.complete_with_tools(
             verification_prompt,
@@ -193,35 +272,53 @@ Email: {request.email}"""
             id_counters=id_counters,
         )
     except Exception as e:
+        logger.error(
+            f"request_id={request_id} | verification_prompt_failed | error={e}",
+            exc_info=True,
+        )
         raise HTTPException(
-            status_code=502, detail=f"Verification prompt failed: {e}"
+            status_code=502, detail="Verification service temporarily unavailable"
         ) from e
 
-    # Run work prompt with tools only if order_description provided
     work_result: CompletionResult | None = None
-    if request.order_description:
+    if has_order:
         work_prompt = WORK_PROMPT.replace("{{customer_info}}", customer_info)
         try:
             work_result = client.complete_with_tools(
                 work_prompt,
                 model=MAIN_MODEL,
-                id_counters=id_counters,  # Use same counters
+                id_counters=id_counters,
             )
         except Exception as e:
+            logger.error(
+                f"request_id={request_id} | work_prompt_failed | error={e}",
+                exc_info=True,
+            )
             raise HTTPException(
-                status_code=502, detail=f"Work prompt failed: {e}"
+                status_code=502, detail="Verification service temporarily unavailable"
             ) from e
 
-    # Build extraction contexts
-    verification_context = verification_result.text
-    verification_context += _format_tool_context(verification_result.tool_calls)
+    return PromptResults(
+        verification=verification_result,
+        work=work_result,
+        id_counters=id_counters,
+    )
+
+
+async def _run_extractions(
+    client: OpenRouterClient,
+    prompt_results: PromptResults,
+    request_id: str,
+) -> ExtractionResults:
+    """Run structured extractions on prompt results."""
+    verification_context = prompt_results.verification.text
+    verification_context += _format_tool_context(prompt_results.verification.tool_calls)
 
     work_context = None
-    if work_result:
-        work_context = work_result.text
-        work_context += _format_tool_context(work_result.tool_calls)
+    if prompt_results.work:
+        work_context = prompt_results.work.text
+        work_context += _format_tool_context(prompt_results.work.tool_calls)
 
-    # Run extractions in parallel
     try:
         extraction_tasks = [
             client.extract_structured_async(
@@ -238,7 +335,6 @@ Email: {request.email}"""
             ),
         ]
 
-        # Add work extraction if applicable
         if work_context:
             extraction_tasks.append(
                 client.extract_structured_async(
@@ -256,71 +352,123 @@ Email: {request.email}"""
         work_data = results[2] if len(results) > 2 else None
 
     except Exception as e:
+        logger.error(
+            f"request_id={request_id} | extraction_failed | error={e}",
+            exc_info=True,
+        )
         raise HTTPException(
-            status_code=502, detail=f"Extraction failed: {e}"
+            status_code=502, detail="Verification service temporarily unavailable"
         ) from e
 
-    # Parse extracted data
     evidence_list = [VerificationEvidence(**row) for row in evidence_data["rows"]]
     determinations = [
         VerificationDetermination(**row) for row in determinations_data["rows"]
     ]
 
-    # Convert background work
     background_work: list[BackgroundWork] | None = None
     if work_data:
         work_rows = [BackgroundWorkRow(**row) for row in work_data["rows"]]
         background_work = _convert_background_work(work_rows)
 
-    # Build checks
-    checks = _merge_checks(evidence_list, determinations)
+    return ExtractionResults(
+        evidence=evidence_list,
+        determinations=determinations,
+        background_work=background_work,
+    )
 
-    # Compute decision status
-    status, flags_count = _compute_decision_status(determinations)
 
-    # Generate summary with LLM
+async def _generate_summary(
+    client: OpenRouterClient,
+    customer_info: str,
+    prompt_results: PromptResults,
+    status: str,
+    request_id: str,
+) -> str:
+    """Generate decision summary using LLM with fallback."""
     try:
         summary_prompt = _build_summary_prompt(
             customer_info,
-            verification_result.text,
-            work_result.text if work_result else None,
+            prompt_results.verification.text,
+            prompt_results.work.text if prompt_results.work else None,
         )
         summary = await client.generate_text_async(summary_prompt, model=EXTRACTION_MODEL)
-        # Clean up summary (remove quotes, word counts, etc.)
-        summary = summary.strip().strip('"').strip("'")
-    except Exception:
-        # Fallback to simple summary if LLM fails
+        return summary.strip().strip('"').strip("'")
+    except Exception as e:
+        logger.warning(f"request_id={request_id} | summary_generation_failed | error={e}")
         if status == "PASS":
-            summary = "All verification criteria passed."
+            return "All verification criteria passed."
         elif status == "FLAG":
-            summary = "Sanctions screening flagged - requires immediate review."
+            return "Sanctions screening flagged - requires immediate review."
         else:
-            summary = "Some criteria require manual review."
+            return "Some criteria require manual review."
 
-    decision = Decision(
-        status=status,
-        flags_count=flags_count,
-        summary=summary,
-    )
+
+@app.post("/verify", response_model=KYCResponse)
+@limiter.limit("60/minute")
+async def verify_customer(
+    request: Request,
+    kyc_request: KYCRequest,
+    api_key: str = Security(verify_api_key),
+) -> KYCResponse:
+    """
+    Run know-your-customer checks on a life-science customer.
+
+    This endpoint:
+    1. Checks affiliation, web domain, institution legitimacy, and sanctions screening
+    2. Finds relevant work from the customer/their institution if provided details on the order
+    3. Returns summary of findings with full audit trail
+
+    Requires X-API-Key header for authentication.
+    """
+    request_id = getattr(request.state, "request_id", "unknown")
+    has_order = bool(kyc_request.order_description)
+    logger.info(f"request_id={request_id} | verify_started | has_order={has_order}")
+
+    try:
+        client = OpenRouterClient()
+    except ValueError as e:
+        logger.error(f"request_id={request_id} | client_init_failed | error={e}")
+        raise HTTPException(
+            status_code=500, detail="Service configuration error"
+        ) from e
+
+    # Build customer info string for prompt templates
+    customer_info = f"""Name: {kyc_request.customer_name}
+Institution: {kyc_request.institution}
+Email: {kyc_request.email}"""
+    if kyc_request.order_description:
+        customer_info += f"\nOrder: {kyc_request.order_description}"
+
+    # Run prompts and extractions
+    prompt_results = _run_prompts(client, customer_info, has_order, request_id)
+    extraction_results = await _run_extractions(client, prompt_results, request_id)
+
+    # Build response
+    checks = _merge_checks(extraction_results.evidence, extraction_results.determinations)
+    status, flags_count = _compute_decision_status(extraction_results.determinations)
+    summary = await _generate_summary(client, customer_info, prompt_results, status, request_id)
 
     # Combine all tool calls for audit
-    all_tool_calls = list(verification_result.tool_calls)
-    if work_result:
-        all_tool_calls.extend(work_result.tool_calls)
+    all_tool_calls = list(prompt_results.verification.tool_calls)
+    if prompt_results.work:
+        all_tool_calls.extend(prompt_results.work.tool_calls)
 
-    audit = Audit(
-        tool_calls=normalize_tool_calls(all_tool_calls),
-        raw=RawOutput(
-            verification=verification_result.text,
-            work=work_result.text if work_result else None,
-        ),
+    logger.info(
+        f"request_id={request_id} | verify_completed | "
+        f"status={status} | flags_count={flags_count}"
     )
 
     return KYCResponse(
-        decision=decision,
+        decision=Decision(status=status, flags_count=flags_count, summary=summary),
         checks=checks,
-        background_work=background_work,
-        audit=audit,
+        background_work=extraction_results.background_work,
+        audit=Audit(
+            tool_calls=normalize_tool_calls(all_tool_calls),
+            raw=RawOutput(
+                verification=prompt_results.verification.text,
+                work=prompt_results.work.text if prompt_results.work else None,
+            ),
+        ),
     )
 
 

@@ -8,12 +8,24 @@ from typing import Any
 
 import httpx
 
-from app.tools.registry import ToolOutput
+from app.constants import TIMEOUT_SHORT
+from app.tools.registry import ToolOutput, http_error_output
 
 # API Configuration
 ORCID_BASE_URL = "https://pub.orcid.org/v3.0"
 ORCID_HEADERS = {"Accept": "application/vnd.orcid+json"}
-TIMEOUT = 30
+
+
+def _safe_get(data: dict | None, *keys: str, default: Any = None) -> Any:
+    """Safely traverse nested dicts, returning default if any key is missing."""
+    current = data
+    for key in keys:
+        if not isinstance(current, dict):
+            return default
+        current = current.get(key)
+        if current is None:
+            return default
+    return current
 
 
 def _extract_date(date_obj: dict | None) -> str | None:
@@ -36,57 +48,45 @@ def _extract_date(date_obj: dict | None) -> str | None:
 def _fetch_orcid_endpoint(orcid_id: str, endpoint: str) -> dict[str, Any]:
     """Fetch data from a specific ORCID API endpoint."""
     url = f"{ORCID_BASE_URL}/{orcid_id}/{endpoint}"
-    response = httpx.get(url, headers=ORCID_HEADERS, timeout=TIMEOUT)
+    response = httpx.get(url, headers=ORCID_HEADERS, timeout=TIMEOUT_SHORT)
     response.raise_for_status()
     return response.json()
 
 
 def _parse_person(data: dict) -> dict:
     """Parse person data from ORCID API response."""
-    name_data = data.get("name", {}) or {}
-    
-    given_names = name_data.get("given-names", {})
-    family_name = name_data.get("family-name", {})
-    credit_name = name_data.get("credit-name", {})
-    
     result = {
-        "given_name": given_names.get("value") if given_names else None,
-        "family_name": family_name.get("value") if family_name else None,
-        "credit_name": credit_name.get("value") if credit_name else None,
+        "given_name": _safe_get(data, "name", "given-names", "value"),
+        "family_name": _safe_get(data, "name", "family-name", "value"),
+        "credit_name": _safe_get(data, "name", "credit-name", "value"),
+        "biography": _safe_get(data, "biography", "content"),
     }
-    
-    bio = data.get("biography", {})
-    result["biography"] = bio.get("content") if bio else None
-    
-    keywords_data = data.get("keywords", {}) or {}
-    keywords = keywords_data.get("keyword", []) or []
+
+    keywords = _safe_get(data, "keywords", "keyword", default=[]) or []
     result["keywords"] = [kw.get("content") for kw in keywords if kw.get("content")]
-    
-    emails_data = data.get("emails", {}) or {}
-    emails = emails_data.get("email", []) or []
+
+    emails = _safe_get(data, "emails", "email", default=[]) or []
     result["emails"] = [e.get("email") for e in emails if e.get("email")]
-    
-    ext_ids_data = data.get("external-identifiers", {}) or {}
-    ext_ids = ext_ids_data.get("external-identifier", []) or []
+
+    ext_ids = _safe_get(data, "external-identifiers", "external-identifier", default=[]) or []
     result["external_ids"] = [
         {
             "type": eid.get("external-id-type"),
             "value": eid.get("external-id-value"),
-            "url": eid.get("external-id-url", {}).get("value") if eid.get("external-id-url") else None
+            "url": _safe_get(eid, "external-id-url", "value"),
         }
         for eid in ext_ids
     ]
-    
-    urls_data = data.get("researcher-urls", {}) or {}
-    urls = urls_data.get("researcher-url", []) or []
+
+    urls = _safe_get(data, "researcher-urls", "researcher-url", default=[]) or []
     result["urls"] = [
         {
             "name": u.get("url-name"),
-            "url": u.get("url", {}).get("value") if u.get("url") else None
+            "url": _safe_get(u, "url", "value"),
         }
         for u in urls
     ]
-    
+
     return result
 
 
@@ -121,40 +121,27 @@ def _parse_affiliations(data: dict, affiliation_type: str) -> list[dict]:
 def _parse_works(data: dict) -> list[dict]:
     """Parse works/publications from ORCID API response."""
     works = []
-    
+
     for group in data.get("group", []) or []:
         work_summaries = group.get("work-summary", []) or []
         if not work_summaries:
             continue
-            
+
         work = work_summaries[0]
-        
-        title_data = work.get("title", {}) or {}
-        title_inner = title_data.get("title", {}) or {}
-        
-        ext_ids = group.get("external-ids", {}) or {}
-        ext_id_list = ext_ids.get("external-id", []) or []
-        
-        identifiers = [
-            {
-                "type": eid.get("external-id-type"),
-                "value": eid.get("external-id-value")
-            }
-            for eid in ext_id_list
-        ]
-        
-        journal = work.get("journal-title", {})
-        url = work.get("url", {})
-        
+        ext_id_list = _safe_get(group, "external-ids", "external-id", default=[]) or []
+
         works.append({
-            "title": title_inner.get("value") if title_inner else None,
+            "title": _safe_get(work, "title", "title", "value"),
             "type": work.get("type"),
             "publication_date": _extract_date(work.get("publication-date")),
-            "journal": journal.get("value") if journal else None,
-            "url": url.get("value") if url else None,
-            "identifiers": identifiers
+            "journal": _safe_get(work, "journal-title", "value"),
+            "url": _safe_get(work, "url", "value"),
+            "identifiers": [
+                {"type": eid.get("external-id-type"), "value": eid.get("external-id-value")}
+                for eid in ext_id_list
+            ],
         })
-    
+
     return works
 
 
@@ -198,24 +185,8 @@ def get_orcid_profile(orcid_id: str) -> ToolOutput:
 
         return ToolOutput(items=[profile])
 
-    except httpx.HTTPStatusError as e:
-        if e.response.status_code == 404:
-            return ToolOutput(
-                items=[],
-                metadata={"error": True, "message": f"ORCID ID not found: {orcid_id}"},
-            )
-        return ToolOutput(
-            items=[],
-            metadata={
-                "error": True,
-                "message": f"ORCID API error: {e.response.status_code} - {str(e)}",
-            },
-        )
-    except httpx.RequestError as e:
-        return ToolOutput(
-            items=[],
-            metadata={"error": True, "message": f"Request failed: {str(e)}"},
-        )
+    except (httpx.HTTPStatusError, httpx.RequestError) as e:
+        return http_error_output(e, not_found_message=f"ORCID ID not found: {orcid_id}")
 
 
 def search_orcid_works(orcid_id: str, keywords: list[str]) -> ToolOutput:
@@ -262,21 +233,5 @@ def search_orcid_works(orcid_id: str, keywords: list[str]) -> ToolOutput:
             },
         )
 
-    except httpx.HTTPStatusError as e:
-        if e.response.status_code == 404:
-            return ToolOutput(
-                items=[],
-                metadata={"error": True, "message": f"ORCID ID not found: {orcid_id}"},
-            )
-        return ToolOutput(
-            items=[],
-            metadata={
-                "error": True,
-                "message": f"ORCID API error: {e.response.status_code} - {str(e)}",
-            },
-        )
-    except httpx.RequestError as e:
-        return ToolOutput(
-            items=[],
-            metadata={"error": True, "message": f"Request failed: {str(e)}"},
-        )
+    except (httpx.HTTPStatusError, httpx.RequestError) as e:
+        return http_error_output(e, not_found_message=f"ORCID ID not found: {orcid_id}")

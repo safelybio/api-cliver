@@ -1,0 +1,74 @@
+{
+  "verification_with_tools": {
+    "output": [
+      {
+        "type": "function_call",
+        "call_id": "call_1",
+        "name": "search_web",
+        "arguments": "{\"query\": \"Jane Smith MIT biology professor\"}"
+      }
+    ]
+  },
+  "verification_final": {
+    "output": [
+      {
+        "type": "message",
+        "content": [
+          {
+            "type": "output_text",
+            "text": "## Verification Results\n\nBased on my research, I have verified the customer Jane Smith.\n\n### Customer Institutional Affiliation\nJane Smith is confirmed as an Associate Professor at MIT [web1].\n\n### Institution Type and Biomedical Focus\nMIT is a major research university with established biomedical programs [web1].\n\n### Email Domain Verification\nThe email domain mit.edu matches the stated institution [web1].\n\n### Sanctions and Export Control Screening\nNo matches found in the consolidated screening list [screen1]."
+          }
+        ]
+      }
+    ]
+  },
+  "work_final": {
+    "output": [
+      {
+        "type": "message",
+        "content": [
+          {
+            "type": "output_text",
+            "text": "## Background Work Analysis\n\nThe customer has published research relevant to the order.\n\n| Relevance | Organism | Summary | Sources |\n|-----------|----------|---------|--------|\n| 5 | SARS-CoV-2 | Published coronavirus spike protein research | [epmc1] |"
+          }
+        ]
+      }
+    ]
+  },
+  "extraction_evidence": {
+    "choices": [
+      {
+        "message": {
+          "content": "{\"rows\":[{\"criterion\":\"Customer Institutional Affiliation\",\"sources\":[\"web1\"],\"evidence_summary\":\"Jane Smith confirmed as Associate Professor at MIT.\"},{\"criterion\":\"Institution Type and Biomedical Focus\",\"sources\":[\"web1\"],\"evidence_summary\":\"MIT is a major research university.\"},{\"criterion\":\"Email Domain Verification\",\"sources\":[\"web1\"],\"evidence_summary\":\"Email domain matches institution.\"},{\"criterion\":\"Sanctions and Export Control Screening\",\"sources\":[\"screen1\"],\"evidence_summary\":\"No matches found.\"}]}"
+        }
+      }
+    ]
+  },
+  "extraction_determinations": {
+    "choices": [
+      {
+        "message": {
+          "content": "{\"rows\":[{\"criterion\":\"Customer Institutional Affiliation\",\"flag\":\"NO FLAG\"},{\"criterion\":\"Institution Type and Biomedical Focus\",\"flag\":\"NO FLAG\"},{\"criterion\":\"Email Domain Verification\",\"flag\":\"NO FLAG\"},{\"criterion\":\"Sanctions and Export Control Screening\",\"flag\":\"NO FLAG\"}]}"
+        }
+      }
+    ]
+  },
+  "extraction_work": {
+    "choices": [
+      {
+        "message": {
+          "content": "{\"rows\":[{\"relevance_level\":5,\"organism\":\"SARS-CoV-2\",\"sources\":[\"epmc1\"],\"work_summary\":\"Published coronavirus spike protein research.\"}]}"
+        }
+      }
+    ]
+  },
+  "summary": {
+    "choices": [
+      {
+        "message": {
+          "content": "Jane Smith is a verified MIT professor with relevant virology research experience."
+        }
+      }
+    ]
+  }
+}
