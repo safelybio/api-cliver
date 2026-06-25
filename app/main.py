@@ -94,7 +94,7 @@ EXTRACTION_PROMPT_WORK = (PROMPTS_DIR / "extraction_work.txt").read_text()
 SUMMARY_PROMPT = (PROMPTS_DIR / "summary.txt").read_text()
 
 # Model configuration
-MAIN_MODEL = "google/gemini-3-pro-preview"
+MAIN_MODEL = "google/gemini-3.1-pro-preview"
 EXTRACTION_MODEL = "google/gemini-3-flash-preview"
 
 # Sanctions criterion name

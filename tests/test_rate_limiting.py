@@ -8,7 +8,6 @@ import pytest
 from tests.conftest import (
     build_background_work_response,
     build_openrouter_chat_reply,
-    build_openrouter_responses_reply,
     build_verification_determination_response,
     build_verification_evidence_response,
 )
@@ -20,12 +19,12 @@ AUTH_HEADERS = {"X-API-Key": "test-api-key"}
 def _setup_verify_mocks(httpx_mock):
     """Set up mocks for a single /verify request."""
     httpx_mock.add_response(
-        url="https://openrouter.ai/api/v1/responses",
-        json=build_openrouter_responses_reply("Verification completed."),
+        url="https://openrouter.ai/api/v1/chat/completions",
+        json=build_openrouter_chat_reply("Verification completed."),
     )
     httpx_mock.add_response(
-        url="https://openrouter.ai/api/v1/responses",
-        json=build_openrouter_responses_reply("Work completed."),
+        url="https://openrouter.ai/api/v1/chat/completions",
+        json=build_openrouter_chat_reply("Work completed."),
     )
     httpx_mock.add_response(
         url="https://openrouter.ai/api/v1/chat/completions",

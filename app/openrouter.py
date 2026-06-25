@@ -8,11 +8,15 @@ from typing import Any
 import httpx
 from tavily import TavilyClient  # type: ignore[import-untyped]
 
-from app.constants import SNIPPET_PREVIEW_LENGTH, TIMEOUT_LONG, TIMEOUT_MEDIUM
+from app.constants import (
+    MAX_COMPLETION_TOKENS,
+    SNIPPET_PREVIEW_LENGTH,
+    TIMEOUT_LONG,
+    TIMEOUT_MEDIUM,
+)
 from app.models import ToolResult
-from app.tools.registry import ToolOutput, execute_tool, get_responses_tools
+from app.tools.registry import ToolOutput, execute_tool, get_chat_tools
 
-OPENROUTER_RESPONSES_URL = "https://openrouter.ai/api/v1/responses"
 OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 # Tool prefix mapping for result IDs
@@ -256,7 +260,7 @@ class OpenRouterClient:
     def complete_with_tools(
         self,
         prompt: str,
-        model: str = "google/gemini-2.5-pro-preview",
+        model: str = "google/gemini-3.1-pro-preview",
         tool_names: list[str] | None = None,
         max_iterations: int = 20,
         id_counters: dict[str, int] | None = None,
@@ -274,47 +278,49 @@ class OpenRouterClient:
         Returns:
             CompletionResult with final text and all tool calls made.
         """
-        tools = get_responses_tools(tool_names)
-        input_items: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
+        tools = get_chat_tools(tool_names)
+        messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
 
         tool_calls: list[RawToolCall] = []
         if id_counters is None:
             id_counters = {}  # Per-result ID counters
 
-        output_items: list[dict[str, Any]] = []
-        data: dict[str, Any] = {}
+        message: dict[str, Any] = {}
 
         for _ in range(max_iterations):
             payload: dict[str, Any] = {
                 "model": model,
-                "input": input_items,
+                "messages": messages,
                 "tools": tools,
                 "tool_choice": "auto",
+                "max_tokens": MAX_COMPLETION_TOKENS,
             }
 
             with httpx.Client(timeout=TIMEOUT_LONG) as client:
                 response = client.post(
-                    OPENROUTER_RESPONSES_URL,
+                    OPENROUTER_CHAT_URL,
                     headers=self.headers,
                     json=payload,
                 )
             response.raise_for_status()
             data = response.json()
 
-            output_items = data.get("output", [])
-            function_calls = [
-                item for item in output_items if item.get("type") == "function_call"
-            ]
+            message = data["choices"][0]["message"]
+            requested_calls = message.get("tool_calls") or []
 
-            if not function_calls:
+            if not requested_calls:
                 break
 
-            for fc in function_calls:
-                func_name = fc.get("name", "")
-                call_id = fc.get("call_id", "")
+            # Echo the assistant's tool-call turn back into the conversation.
+            messages.append(message)
+
+            for tc in requested_calls:
+                func = tc.get("function", {})
+                func_name = func.get("name", "")
+                call_id = tc.get("id", "")
 
                 try:
-                    args = json.loads(fc.get("arguments", "{}"))
+                    args = json.loads(func.get("arguments", "{}"))
                 except json.JSONDecodeError:
                     args = {}
 
@@ -334,26 +340,16 @@ class OpenRouterClient:
                     )
                 )
 
-                # Add to conversation for next iteration
-                input_items.append(
+                # Add the tool result for the next iteration
+                messages.append(
                     {
-                        "type": "function_call",
-                        "id": fc.get("id", call_id),
-                        "call_id": call_id,
-                        "name": func_name,
-                        "arguments": fc.get("arguments", "{}"),
-                        "status": "completed",
-                    }
-                )
-                input_items.append(
-                    {
-                        "type": "function_call_output",
-                        "call_id": call_id,
-                        "output": model_output,
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": model_output,
                     }
                 )
 
-        final_text = self._extract_text(output_items, data)
+        final_text = self._extract_text(message)
         return CompletionResult(text=final_text, tool_calls=tool_calls)
 
     def extract_structured(
@@ -435,18 +431,19 @@ class OpenRouterClient:
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"]
 
-    def _extract_text(
-        self, output_items: list[dict[str, Any]], data: dict[str, Any]
-    ) -> str:
-        """Extract text content from response output items."""
-        for item in output_items:
-            if item.get("type") == "message":
-                content_items = item.get("content", [])
-                text_parts = []
-                for content in content_items:
-                    if content.get("type") == "output_text":
-                        text_parts.append(content.get("text", ""))
-                return "".join(text_parts)
+    def _extract_text(self, message: dict[str, Any]) -> str:
+        """Extract text content from a Chat Completions message."""
+        content = message.get("content")
+        if isinstance(content, str):
+            return content
 
-        # Fallback to top-level output_text
-        return data.get("output_text", "")
+        # Some providers return content as a list of parts.
+        if isinstance(content, list):
+            text_types = ("text", "output_text")
+            return "".join(
+                part.get("text", "")
+                for part in content
+                if isinstance(part, dict) and part.get("type") in text_types
+            )
+
+        return ""

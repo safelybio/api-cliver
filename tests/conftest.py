@@ -95,17 +95,11 @@ def mock_tool_responses():
 
 
 # Mock response builders for pytest-httpx
-def build_openrouter_responses_reply(text: str, tool_calls: list | None = None):
-    """Build a mock OpenRouter /responses API reply."""
-    content = [{"type": "output_text", "text": text}]
-
-    output = []
-    if tool_calls:
-        output.extend(tool_calls)
-
-    output.append({"type": "message", "content": content})
-
-    return {"output": output}
+def build_openrouter_tool_reply(tool_calls: list):
+    """Build a mock /chat/completions reply that requests tool calls."""
+    return {
+        "choices": [{"message": {"content": None, "tool_calls": tool_calls}}]
+    }
 
 
 def build_openrouter_chat_reply(content: str):
@@ -176,23 +170,23 @@ def mock_full_verify_flow(
     """
     Set up mock responses for full /verify flow (with order_description).
 
-    This sets up 6 responses:
-    1. Verification prompt (OpenRouter /responses)
-    2. Work prompt (OpenRouter /responses)
-    3. Evidence extraction (OpenRouter /chat)
-    4. Determination extraction (OpenRouter /chat)
-    5. Work extraction (OpenRouter /chat)
-    6. Summary generation (OpenRouter /chat)
+    This sets up 6 responses, all on OpenRouter /chat/completions:
+    1. Verification prompt
+    2. Work prompt
+    3. Evidence extraction
+    4. Determination extraction
+    5. Work extraction
+    6. Summary generation
     """
     # Verification prompt
     httpx_mock.add_response(
-        url="https://openrouter.ai/api/v1/responses",
-        json=build_openrouter_responses_reply(verification_text),
+        url="https://openrouter.ai/api/v1/chat/completions",
+        json=build_openrouter_chat_reply(verification_text),
     )
     # Work prompt
     httpx_mock.add_response(
-        url="https://openrouter.ai/api/v1/responses",
-        json=build_openrouter_responses_reply(work_text),
+        url="https://openrouter.ai/api/v1/chat/completions",
+        json=build_openrouter_chat_reply(work_text),
     )
     # Evidence extraction
     httpx_mock.add_response(
@@ -224,16 +218,16 @@ def mock_minimal_verify_flow(
     """
     Set up mock responses for minimal /verify flow (no order_description).
 
-    This sets up 4 responses:
-    1. Verification prompt (OpenRouter /responses)
-    2. Evidence extraction (OpenRouter /chat)
-    3. Determination extraction (OpenRouter /chat)
-    4. Summary generation (OpenRouter /chat)
+    This sets up 4 responses, all on OpenRouter /chat/completions:
+    1. Verification prompt
+    2. Evidence extraction
+    3. Determination extraction
+    4. Summary generation
     """
     # Verification prompt
     httpx_mock.add_response(
-        url="https://openrouter.ai/api/v1/responses",
-        json=build_openrouter_responses_reply(verification_text),
+        url="https://openrouter.ai/api/v1/chat/completions",
+        json=build_openrouter_chat_reply(verification_text),
     )
     # Evidence extraction
     httpx_mock.add_response(

@@ -7,7 +7,6 @@ import pytest
 from tests.conftest import (
     build_background_work_response,
     build_openrouter_chat_reply,
-    build_openrouter_responses_reply,
     build_verification_determination_response,
     build_verification_evidence_response,
 )
@@ -46,13 +45,13 @@ class TestAPIKeyAuthentication:
         """Test that /verify with valid API key succeeds."""
         # Set up mocks for verification prompt
         httpx_mock.add_response(
-            url="https://openrouter.ai/api/v1/responses",
-            json=build_openrouter_responses_reply("Verification completed."),
+            url="https://openrouter.ai/api/v1/chat/completions",
+            json=build_openrouter_chat_reply("Verification completed."),
         )
         # Work prompt (since sample_kyc_request includes order_description)
         httpx_mock.add_response(
-            url="https://openrouter.ai/api/v1/responses",
-            json=build_openrouter_responses_reply("Work completed."),
+            url="https://openrouter.ai/api/v1/chat/completions",
+            json=build_openrouter_chat_reply("Work completed."),
         )
         # Extraction calls
         httpx_mock.add_response(

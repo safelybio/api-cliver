@@ -113,6 +113,28 @@ def get_responses_tools(tool_names: list[str] | None = None) -> list[dict[str, A
     return tools
 
 
+def get_chat_tools(tool_names: list[str] | None = None) -> list[dict[str, Any]]:
+    """Get tools in OpenRouter Chat Completions API format."""
+    tools_def = _load_definitions().get("tools", {})
+    tools = []
+
+    for name, spec in tools_def.items():
+        if tool_names and name not in tool_names:
+            continue
+        tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": spec["description"].strip(),
+                    "parameters": _build_parameters(spec.get("parameters", {})),
+                },
+            }
+        )
+
+    return tools
+
+
 def get_implementation(tool_name: str) -> Callable[..., Any]:
     """Get the implementation function for a tool."""
     tools_def = _load_definitions().get("tools", {})
