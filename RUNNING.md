@@ -9,8 +9,8 @@ Branch `fix/openrouter-chat-completions` (merged into this `master`; that branch
 - `app/constants.py` — `MAX_COMPLETION_TOKENS = 8000`.
 - `pytest` → **31 passed**.
 
-## Speed + async — branch `perf/cliver-speed-async` (currently deployed)
-A second round of work on branch **`perf/cliver-speed-async`** (pushed; **please merge to `master`** — the live `cliver-api` is deployed from this branch now, not `master`):
+## Speed + async (on `master`, deployed)
+A second round of work, merged to **`master`** from `perf/cliver-speed-async`; the live `cliver-api` is deployed from it:
 - **Parallel tool execution (the big win).** `complete_with_tools` is now `async`; a turn's tool calls run **concurrently** via `asyncio.gather` + `run_in_executor` — they used to run one-at-a-time, which was the dominant latency. Plus `MAIN_MODEL` → `google/gemini-3-flash-preview`, tool-loop cap 20 → 10, `MAX_COMPLETION_TOKENS` 8000 → 4000.
 - **Async endpoints (no more 60 s edge timeout).** `POST /verify/async` returns a `job_id` immediately; poll `GET /verify/jobs/{job_id}` → `{status: pending|completed|failed, result?}`. In-memory job store (single-process only; use Redis for multi-worker). Sync `POST /verify` is unchanged; shared helper `_run_verification` runs the flow for both.
 - **Result, measured live:** a 46-tool-call screen dropped from >60 s (edge-timeout territory) to **~22 s** (no order) / **~68 s** (with an order — runs a second research loop). Because submit and each poll are individually fast, async screens complete cleanly regardless of total duration.
