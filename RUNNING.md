@@ -9,8 +9,16 @@ Branch `fix/openrouter-chat-completions` (merged into this `master`; that branch
 - `app/constants.py` — `MAX_COMPLETION_TOKENS = 8000`.
 - `pytest` → **31 passed**.
 
+## Speed + async — branch `perf/cliver-speed-async` (currently deployed)
+A second round of work on branch **`perf/cliver-speed-async`** (pushed; **please merge to `master`** — the live `cliver-api` is deployed from this branch now, not `master`):
+- **Parallel tool execution (the big win).** `complete_with_tools` is now `async`; a turn's tool calls run **concurrently** via `asyncio.gather` + `run_in_executor` — they used to run one-at-a-time, which was the dominant latency. Plus `MAIN_MODEL` → `google/gemini-3-flash-preview`, tool-loop cap 20 → 10, `MAX_COMPLETION_TOKENS` 8000 → 4000.
+- **Async endpoints (no more 60 s edge timeout).** `POST /verify/async` returns a `job_id` immediately; poll `GET /verify/jobs/{job_id}` → `{status: pending|completed|failed, result?}`. In-memory job store (single-process only; use Redis for multi-worker). Sync `POST /verify` is unchanged; shared helper `_run_verification` runs the flow for both.
+- **Result, measured live:** a 46-tool-call screen dropped from >60 s (edge-timeout territory) to **~22 s** (no order) / **~68 s** (with an order — runs a second research loop). Because submit and each poll are individually fast, async screens complete cleanly regardless of total duration.
+- `uv run pytest` → **35 passed**.
+- ⚠️ Sanity-check the flash slug `google/gemini-3-flash-preview` is live on the OpenRouter account (it's now both `MAIN_MODEL` and `EXTRACTION_MODEL`).
+
 ## What it is
-One endpoint, `POST /verify`, gated by header `X-API-Key`. It runs an LLM tool-loop (OpenRouter → Gemini) with web search (Tavily) + ORCID / Europe PMC, and returns a `decision` (status **PASS/REVIEW/FLAG** + one-line summary), exactly **4 criteria** (each FLAG / NO FLAG / UNDETERMINED + an evidence paragraph + cited sources), optional `background_work` on the order, and a sources list. `GET /health` is open (no key). **Slow + paid:** ~30–90 s and roughly **10–20¢ per call** (a Gemini-pro tool loop).
+One endpoint, `POST /verify`, gated by header `X-API-Key`. It runs an LLM tool-loop (OpenRouter → Gemini) with web search (Tavily) + ORCID / Europe PMC, and returns a `decision` (status **PASS/REVIEW/FLAG** + one-line summary), exactly **4 criteria** (each FLAG / NO FLAG / UNDETERMINED + an evidence paragraph + cited sources), optional `background_work` on the order, and a sources list. `GET /health` is open (no key). **Paid:** roughly **5–15¢ per call**. **Latency:** ~20 s (no order) to ~70 s (with an order) on the `perf/cliver-speed-async` branch — was ~30–90 s on a Gemini-pro serial-tool loop; see **Speed + async** below.
 
 ## Request / response
 ```
@@ -49,7 +57,7 @@ curl -s -X POST localhost:8080/verify \
 
 ## Team deployment (Railway + Vercel)
 - **Railway** — service `cliver-api` (its own project), built from the `Dockerfile`. Live at **<https://cliver-api-production.up.railway.app>** (`/health` → 200). Redeploy with `railway up` from a clone linked to that project (`railway link` / `railway init` already done on the original clone). The Dockerfile binds port 8080; Railway routes to it via `EXPOSE`.
-- **Playground (easiest way to try it)** — a hosted form at the Safely Verify demo (`…/cliver.html`) posts to a Vercel serverless proxy that injects the `X-API-Key` server-side, so a link works without exposing the key. ⚠️ Vercel Hobby caps serverless functions at **60 s**, and Cliver runs often exceed that — for a reliable shareable URL, host the proxy on Railway instead. A standalone local playground (`cliver-playground.py`, served on `:8099`) has no timeout.
+- **Playground (easiest way to try it)** — live at **<https://try-cliver-production.up.railway.app>** (Railway service `try-cliver`, project `try-cliver`; source at `~/projects/cliver-playground/main.py`, redeploy `railway up -s try-cliver`). It's a `stdlib`-only Python server that serves a form and proxies the **async** flow (`POST /verify/async` → poll `GET /verify/jobs/{id}`), injecting `X-API-Key` server-side. Because it uses async + is a long-running server (not a 60 s serverless function), it has no timeout. Its only env var is `CLIVER_API_KEY`. *(Supersedes the old Vercel `…/cliver.html` proxy, which hit the Vercel Hobby 60 s function cap.)*
 
 ## Upstream contribution
 `PR_DRAFT.md` is the ready-to-send pull request back to `alejoacelas/api-cliver` (the fix makes their hosted API work again). Submit with `gh pr create --repo alejoacelas/api-cliver --base master --head safelybio:fix/openrouter-chat-completions --body-file PR_DRAFT.md` once it's been reviewed.
