@@ -7,6 +7,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, Security
@@ -94,7 +95,7 @@ EXTRACTION_PROMPT_WORK = (PROMPTS_DIR / "extraction_work.txt").read_text()
 SUMMARY_PROMPT = (PROMPTS_DIR / "summary.txt").read_text()
 
 # Model configuration
-MAIN_MODEL = "google/gemini-3.1-pro-preview"
+MAIN_MODEL = "google/gemini-3-flash-preview"
 EXTRACTION_MODEL = "google/gemini-3-flash-preview"
 
 # Sanctions criterion name
@@ -255,7 +256,7 @@ class ExtractionResults:
     background_work: list[BackgroundWork] | None
 
 
-def _run_prompts(
+async def _run_prompts(
     client: OpenRouterClient,
     customer_info: str,
     has_order: bool,
@@ -266,7 +267,7 @@ def _run_prompts(
 
     verification_prompt = VERIFICATION_PROMPT.replace("{{customer_info}}", customer_info)
     try:
-        verification_result = client.complete_with_tools(
+        verification_result = await client.complete_with_tools(
             verification_prompt,
             model=MAIN_MODEL,
             id_counters=id_counters,
@@ -284,7 +285,7 @@ def _run_prompts(
     if has_order:
         work_prompt = WORK_PROMPT.replace("{{customer_info}}", customer_info)
         try:
-            work_result = client.complete_with_tools(
+            work_result = await client.complete_with_tools(
                 work_prompt,
                 model=MAIN_MODEL,
                 id_counters=id_counters,
@@ -403,24 +404,11 @@ async def _generate_summary(
             return "Some criteria require manual review."
 
 
-@app.post("/verify", response_model=KYCResponse)
-@limiter.limit("60/minute")
-async def verify_customer(
-    request: Request,
-    kyc_request: KYCRequest,
-    api_key: str = Security(verify_api_key),
-) -> KYCResponse:
-    """
-    Run know-your-customer checks on a life-science customer.
+async def _run_verification(kyc_request: KYCRequest, request_id: str) -> KYCResponse:
+    """Run the full KYC verification flow and build the response.
 
-    This endpoint:
-    1. Checks affiliation, web domain, institution legitimacy, and sanctions screening
-    2. Finds relevant work from the customer/their institution if provided details on the order
-    3. Returns summary of findings with full audit trail
-
-    Requires X-API-Key header for authentication.
+    Shared by the synchronous ``/verify`` endpoint and the async job worker.
     """
-    request_id = getattr(request.state, "request_id", "unknown")
     has_order = bool(kyc_request.order_description)
     logger.info(f"request_id={request_id} | verify_started | has_order={has_order}")
 
@@ -440,7 +428,7 @@ Email: {kyc_request.email}"""
         customer_info += f"\nOrder: {kyc_request.order_description}"
 
     # Run prompts and extractions
-    prompt_results = _run_prompts(client, customer_info, has_order, request_id)
+    prompt_results = await _run_prompts(client, customer_info, has_order, request_id)
     extraction_results = await _run_extractions(client, prompt_results, request_id)
 
     # Build response
@@ -470,6 +458,121 @@ Email: {kyc_request.email}"""
             ),
         ),
     )
+
+
+@app.post("/verify", response_model=KYCResponse)
+@limiter.limit("60/minute")
+async def verify_customer(
+    request: Request,
+    kyc_request: KYCRequest,
+    api_key: str = Security(verify_api_key),
+) -> KYCResponse:
+    """
+    Run know-your-customer checks on a life-science customer.
+
+    This endpoint:
+    1. Checks affiliation, web domain, institution legitimacy, and sanctions screening
+    2. Finds relevant work from the customer/their institution if provided details on the order
+    3. Returns summary of findings with full audit trail
+
+    Requires X-API-Key header for authentication.
+    """
+    request_id = getattr(request.state, "request_id", "unknown")
+    return await _run_verification(kyc_request, request_id)
+
+
+# =============================================================================
+# Async job endpoints
+# =============================================================================
+
+# In-memory job store. Suitable for a single-process deployment; a multi-worker
+# or multi-instance setup would need a shared store (e.g. Redis).
+_JOBS: dict[str, dict[str, Any]] = {}
+
+# Rough client-side hint for how long a verification typically takes.
+ESTIMATED_VERIFY_SECONDS = 60
+
+
+async def _run_verification_job(
+    job_id: str, kyc_request: KYCRequest, request_id: str
+) -> None:
+    """Background worker: run verification and store the result on the job."""
+    try:
+        result = await _run_verification(kyc_request, request_id)
+        job = _JOBS.get(job_id)
+        if job is not None:
+            job["status"] = "completed"
+            job["result"] = result
+            job["completed_at"] = time.time()
+    except Exception as e:  # noqa: BLE001 - record any failure on the job
+        logger.error(
+            f"request_id={request_id} | job_id={job_id} | "
+            f"async_verify_failed | error={e}",
+            exc_info=True,
+        )
+        job = _JOBS.get(job_id)
+        if job is not None:
+            job["status"] = "failed"
+            job["error"] = "Verification failed"
+            job["completed_at"] = time.time()
+
+
+@app.post("/verify/async")
+@limiter.limit("60/minute")
+async def verify_customer_async(
+    request: Request,
+    kyc_request: KYCRequest,
+    api_key: str = Security(verify_api_key),
+) -> dict[str, Any]:
+    """
+    Start a verification as a background job and return immediately.
+
+    Returns a ``job_id`` to poll via ``GET /verify/jobs/{job_id}``. Use this for
+    long verifications that would otherwise exceed an edge/proxy timeout.
+
+    Requires X-API-Key header for authentication.
+    """
+    request_id = getattr(request.state, "request_id", "unknown")
+    job_id = str(uuid.uuid4())
+    _JOBS[job_id] = {
+        "status": "pending",
+        "created_at": time.time(),
+        "completed_at": None,
+        "result": None,
+        "error": None,
+    }
+
+    logger.info(f"request_id={request_id} | job_id={job_id} | async_verify_queued")
+    asyncio.create_task(_run_verification_job(job_id, kyc_request, request_id))
+
+    return {
+        "job_id": job_id,
+        "status_url": f"/verify/jobs/{job_id}",
+        "estimated_seconds": ESTIMATED_VERIFY_SECONDS,
+    }
+
+
+@app.get("/verify/jobs/{job_id}")
+async def get_verify_job(
+    job_id: str,
+    api_key: str = Security(verify_api_key),
+) -> dict[str, Any]:
+    """Return the status (and result, once complete) of an async verify job."""
+    job = _JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    response: dict[str, Any] = {
+        "job_id": job_id,
+        "status": job["status"],
+        "created_at": job["created_at"],
+        "completed_at": job["completed_at"],
+    }
+    if job["status"] == "completed":
+        response["result"] = job["result"]
+    elif job["status"] == "failed":
+        response["error"] = job["error"]
+    return response
 
 
 @app.get("/health")

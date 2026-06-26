@@ -1,5 +1,6 @@
 """Simplified OpenRouter client for KYC API."""
 
+import asyncio
 import json
 import os
 from dataclasses import dataclass
@@ -257,12 +258,12 @@ class OpenRouterClient:
             "X-Title": os.environ.get("OPENROUTER_TITLE", "Cliver KYC API"),
         }
 
-    def complete_with_tools(
+    async def complete_with_tools(
         self,
         prompt: str,
-        model: str = "google/gemini-3.1-pro-preview",
+        model: str = "google/gemini-3-flash-preview",
         tool_names: list[str] | None = None,
-        max_iterations: int = 20,
+        max_iterations: int = 10,
         id_counters: dict[str, int] | None = None,
     ) -> CompletionResult:
         """
@@ -286,6 +287,7 @@ class OpenRouterClient:
             id_counters = {}  # Per-result ID counters
 
         message: dict[str, Any] = {}
+        loop = asyncio.get_running_loop()
 
         for _ in range(max_iterations):
             payload: dict[str, Any] = {
@@ -296,8 +298,8 @@ class OpenRouterClient:
                 "max_tokens": MAX_COMPLETION_TOKENS,
             }
 
-            with httpx.Client(timeout=TIMEOUT_LONG) as client:
-                response = client.post(
+            async with httpx.AsyncClient(timeout=TIMEOUT_LONG) as client:
+                response = await client.post(
                     OPENROUTER_CHAT_URL,
                     headers=self.headers,
                     json=payload,
@@ -314,23 +316,33 @@ class OpenRouterClient:
             # Echo the assistant's tool-call turn back into the conversation.
             messages.append(message)
 
+            # Parse each requested call, then run the (blocking) tool
+            # implementations concurrently in the default executor.
+            parsed_calls = []
             for tc in requested_calls:
                 func = tc.get("function", {})
                 func_name = func.get("name", "")
                 call_id = tc.get("id", "")
-
                 try:
                     args = json.loads(func.get("arguments", "{}"))
                 except json.JSONDecodeError:
                     args = {}
+                parsed_calls.append((func_name, call_id, args))
 
-                # Execute tool and get structured output
-                output = execute_tool(func_name, args, self.tavily_client)
+            outputs = await asyncio.gather(
+                *[
+                    loop.run_in_executor(
+                        None, execute_tool, func_name, args, self.tavily_client
+                    )
+                    for func_name, _call_id, args in parsed_calls
+                ]
+            )
 
-                # Format for model with per-result IDs
+            # Format and record results in the original call order so that
+            # per-result IDs and message ordering stay deterministic.
+            for (func_name, call_id, args), output in zip(parsed_calls, outputs):
                 model_output = _format_for_model(func_name, output, id_counters)
 
-                # Store tool call
                 tool_calls.append(
                     RawToolCall(
                         tool_name=func_name,
@@ -340,7 +352,6 @@ class OpenRouterClient:
                     )
                 )
 
-                # Add the tool result for the next iteration
                 messages.append(
                     {
                         "role": "tool",

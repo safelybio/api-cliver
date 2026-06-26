@@ -13,4 +13,4 @@ SNIPPET_PREVIEW_LENGTH = 200  # Max chars for snippet previews
 # reserves this budget up front against the account balance, so an unbounded
 # request can 402 on low-balance accounts; this keeps the reservation sane
 # while leaving ample room for a verification write-up.
-MAX_COMPLETION_TOKENS = 8000
+MAX_COMPLETION_TOKENS = 4000
