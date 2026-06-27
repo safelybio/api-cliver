@@ -29,7 +29,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from app.constants import TOOL_CONTEXT_TRUNCATION
 from app.models import (
     BACKGROUND_WORK_SCHEMA,
     VERIFICATION_DETERMINATION_SCHEMA,
@@ -48,7 +47,6 @@ from app.models import (
 from app.openrouter import (
     CompletionResult,
     OpenRouterClient,
-    RawToolCall,
     normalize_tool_calls,
 )
 
@@ -136,24 +134,6 @@ async def rate_limit_exceeded_handler(
         content={"detail": "Rate limit exceeded. Try again later."},
         headers={"Retry-After": "60", "X-Request-ID": request_id},
     )
-
-
-def _format_tool_context(tool_calls: list[RawToolCall]) -> str:
-    """Format tool calls as context for extraction prompts."""
-    if not tool_calls:
-        return ""
-
-    lines = ["\n\n=== Tool Outputs Reference ==="]
-    for tc in tool_calls:
-        lines.append(f"\n[{tc.tool_name}]:")
-        # Truncate long results for context
-        result_preview = (
-            tc.model_output[:TOOL_CONTEXT_TRUNCATION]
-            if len(tc.model_output) > TOOL_CONTEXT_TRUNCATION
-            else tc.model_output
-        )
-        lines.append(result_preview)
-    return "\n".join(lines)
 
 
 def _compute_decision_status(
@@ -267,10 +247,13 @@ async def _run_prompts(
 
     verification_prompt = VERIFICATION_PROMPT.replace("{{customer_info}}", customer_info)
     try:
+        # Pin every LLM call for this screen to one provider (session_id) so
+        # the implicit prompt cache stays warm across the agent loop.
         verification_result = await client.complete_with_tools(
             verification_prompt,
             model=MAIN_MODEL,
             id_counters=id_counters,
+            session_id=request_id,
         )
     except Exception as e:
         logger.error(
@@ -289,6 +272,7 @@ async def _run_prompts(
                 work_prompt,
                 model=MAIN_MODEL,
                 id_counters=id_counters,
+                session_id=request_id,
             )
         except Exception as e:
             logger.error(
@@ -312,13 +296,14 @@ async def _run_extractions(
     request_id: str,
 ) -> ExtractionResults:
     """Run structured extractions on prompt results."""
+    # The extraction prompts parse the model's own markdown tables, which are
+    # already present in the report text — re-appending the raw tool dump is
+    # redundant for a parse, so use the report text alone.
     verification_context = prompt_results.verification.text
-    verification_context += _format_tool_context(prompt_results.verification.tool_calls)
 
     work_context = None
     if prompt_results.work:
         work_context = prompt_results.work.text
-        work_context += _format_tool_context(prompt_results.work.tool_calls)
 
     try:
         extraction_tasks = [
@@ -327,12 +312,14 @@ async def _run_extractions(
                 EXTRACTION_PROMPT_EVIDENCE,
                 VERIFICATION_EVIDENCE_SCHEMA,
                 model=EXTRACTION_MODEL,
+                session_id=request_id,
             ),
             client.extract_structured_async(
                 verification_context,
                 EXTRACTION_PROMPT_DETERMINATIONS,
                 VERIFICATION_DETERMINATION_SCHEMA,
                 model=EXTRACTION_MODEL,
+                session_id=request_id,
             ),
         ]
 
@@ -343,6 +330,7 @@ async def _run_extractions(
                     EXTRACTION_PROMPT_WORK,
                     BACKGROUND_WORK_SCHEMA,
                     model=EXTRACTION_MODEL,
+                    session_id=request_id,
                 )
             )
 
@@ -392,7 +380,9 @@ async def _generate_summary(
             prompt_results.verification.text,
             prompt_results.work.text if prompt_results.work else None,
         )
-        summary = await client.generate_text_async(summary_prompt, model=EXTRACTION_MODEL)
+        summary = await client.generate_text_async(
+            summary_prompt, model=EXTRACTION_MODEL, session_id=request_id
+        )
         return summary.strip().strip('"').strip("'")
     except Exception as e:
         logger.warning(f"request_id={request_id} | summary_generation_failed | error={e}")

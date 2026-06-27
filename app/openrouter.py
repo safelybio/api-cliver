@@ -55,7 +55,7 @@ def _format_for_model(
                 "id": f"{prefix}{counters[prefix]}",
                 **output.metadata,
             },
-            indent=2,
+            separators=(",", ":"),
         )
 
     # Assign per-result IDs
@@ -70,7 +70,7 @@ def _format_for_model(
             "results": annotated,
             **output.metadata,
         },
-        indent=2,
+        separators=(",", ":"),
     )
 
 
@@ -265,6 +265,7 @@ class OpenRouterClient:
         tool_names: list[str] | None = None,
         max_iterations: int = 10,
         id_counters: dict[str, int] | None = None,
+        session_id: str | None = None,
     ) -> CompletionResult:
         """
         Run a prompt with tool calling loop.
@@ -275,6 +276,7 @@ class OpenRouterClient:
             tool_names: List of tool names to enable, or None for all.
             max_iterations: Maximum tool calling iterations.
             id_counters: Persistent ID counters across multiple calls.
+            session_id: Stable per-screen ID for OpenRouter sticky routing.
 
         Returns:
             CompletionResult with final text and all tool calls made.
@@ -296,7 +298,10 @@ class OpenRouterClient:
                 "tools": tools,
                 "tool_choice": "auto",
                 "max_tokens": MAX_COMPLETION_TOKENS,
+                "usage": {"include": True},
             }
+            if session_id is not None:
+                payload["session_id"] = session_id
 
             async with httpx.AsyncClient(timeout=TIMEOUT_LONG) as client:
                 response = await client.post(
@@ -369,6 +374,7 @@ class OpenRouterClient:
         extraction_prompt: str,
         response_format: dict[str, Any],
         model: str = "google/gemini-2.5-flash",
+        session_id: str | None = None,
     ) -> dict[str, Any]:
         """
         Extract structured data from text using json_schema response_format.
@@ -378,21 +384,26 @@ class OpenRouterClient:
             extraction_prompt: Instructions for extraction.
             response_format: OpenRouter json_schema response format.
             model: Model to use for extraction.
+            session_id: Stable per-screen ID for OpenRouter sticky routing.
 
         Returns:
             Parsed JSON response matching the schema.
         """
+        body: dict[str, Any] = {
+            "model": model,
+            "messages": [
+                {"role": "user", "content": f"{extraction_prompt}\n\n{text}"}
+            ],
+            "response_format": response_format,
+            "usage": {"include": True},
+        }
+        if session_id is not None:
+            body["session_id"] = session_id
         with httpx.Client(timeout=TIMEOUT_MEDIUM) as client:
             response = client.post(
                 OPENROUTER_CHAT_URL,
                 headers=self.headers,
-                json={
-                    "model": model,
-                    "messages": [
-                        {"role": "user", "content": f"{extraction_prompt}\n\n{text}"}
-                    ],
-                    "response_format": response_format,
-                },
+                json=body,
             )
         response.raise_for_status()
 
@@ -405,19 +416,24 @@ class OpenRouterClient:
         extraction_prompt: str,
         response_format: dict[str, Any],
         model: str = "google/gemini-2.5-flash",
+        session_id: str | None = None,
     ) -> dict[str, Any]:
         """Async version of extract_structured."""
+        body: dict[str, Any] = {
+            "model": model,
+            "messages": [
+                {"role": "user", "content": f"{extraction_prompt}\n\n{text}"}
+            ],
+            "response_format": response_format,
+            "usage": {"include": True},
+        }
+        if session_id is not None:
+            body["session_id"] = session_id
         async with httpx.AsyncClient(timeout=TIMEOUT_MEDIUM) as client:
             response = await client.post(
                 OPENROUTER_CHAT_URL,
                 headers=self.headers,
-                json={
-                    "model": model,
-                    "messages": [
-                        {"role": "user", "content": f"{extraction_prompt}\n\n{text}"}
-                    ],
-                    "response_format": response_format,
-                },
+                json=body,
             )
         response.raise_for_status()
 
@@ -428,16 +444,21 @@ class OpenRouterClient:
         self,
         prompt: str,
         model: str = "google/gemini-2.5-flash",
+        session_id: str | None = None,
     ) -> str:
         """Generate text response (no structured output)."""
+        body: dict[str, Any] = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "usage": {"include": True},
+        }
+        if session_id is not None:
+            body["session_id"] = session_id
         async with httpx.AsyncClient(timeout=TIMEOUT_MEDIUM) as client:
             response = await client.post(
                 OPENROUTER_CHAT_URL,
                 headers=self.headers,
-                json={
-                    "model": model,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
+                json=body,
             )
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"]

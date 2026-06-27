@@ -21,8 +21,8 @@ def search_web(query: str, tavily_client: TavilyClient) -> ToolOutput:
         response = tavily_client.search(
             query=query,
             search_depth="advanced",
-            max_results=10,
-            chunks_per_source=5,
+            max_results=6,
+            chunks_per_source=3,
         )
     except BadRequestError as e:
         return ToolOutput(items=[], metadata={"error": str(e)})

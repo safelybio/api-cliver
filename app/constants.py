@@ -6,7 +6,6 @@ TIMEOUT_MEDIUM = 60  # Extraction calls
 TIMEOUT_SHORT = 30  # External APIs (EPMC, ORCID, screening list)
 
 # Text truncation limits
-TOOL_CONTEXT_TRUNCATION = 2000  # Max chars for tool context in extraction prompts
 SNIPPET_PREVIEW_LENGTH = 200  # Max chars for snippet previews
 
 # Max completion tokens for the verification tool-calling loop. OpenRouter
