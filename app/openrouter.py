@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -19,6 +20,8 @@ from app.models import ToolResult
 from app.tools.registry import ToolOutput, execute_tool, get_chat_tools
 
 OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+logger = logging.getLogger(__name__)
 
 # Tool prefix mapping for result IDs
 TOOL_PREFIXES = {
@@ -311,6 +314,10 @@ class OpenRouterClient:
                 )
             response.raise_for_status()
             data = response.json()
+
+            # Cache-hit telemetry: usage carries prompt_tokens + cached_tokens
+            # (OpenRouter prompt-cache accounting) so we can measure sticky-routing.
+            logger.info("or_usage session=%s usage=%s", session_id, data.get("usage"))
 
             message = data["choices"][0]["message"]
             requested_calls = message.get("tool_calls") or []
